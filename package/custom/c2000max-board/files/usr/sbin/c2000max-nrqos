@@ -1,5 +1,5 @@
 #!/bin/sh
-# C2000MAX USB-NR egress queue. This never changes HNAT, packet/connection
+# C2000MAX USB-NR queues. This never changes HNAT, packet/connection
 # marks, routing, firewall, firmware environments or persistent storage.
 
 STATE=${C2000MAX_NRQOS_STATE:-/var/run/c2000max-nrqos}
@@ -8,6 +8,10 @@ BOARD=${C2000MAX_NRQOS_BOARD:-/tmp/sysinfo/board_name}
 COMPAT=${C2000MAX_NRQOS_COMPAT:-/usr/lib/c2000max/qos-compat.sh}
 RATE_AWK=${C2000MAX_NRQOS_AWK:-/usr/lib/c2000max/nrqos-autorate.awk}
 HANDLE=365:
+DOWN_HANDLE=366:
+IFB=ifb-nrqos
+INGRESS_HANDLE=ffff:
+FILTER_PREF=365
 LOCKED=0
 RUN_TOKEN=
 
@@ -78,18 +82,28 @@ config() {
 	ENABLED=$(get enabled); ENABLED=${ENABLED:-0}
 	IFACE=$(get interface); IFACE=${IFACE:-eth2}
 	RATE=$(get upload_kbit); MIN=$(get min_upload_kbit); MAX=$(get max_upload_kbit)
+	DOWN_ENABLED=$(get download_enabled); DOWN_ENABLED=${DOWN_ENABLED:-0}
+	DOWN_RATE=$(get download_kbit); DOWN_RATE=${DOWN_RATE:-0}
+	DOWN_MIN=$(get min_download_kbit); DOWN_MAX=$(get max_download_kbit)
 	AUTO=$(get autorate); AUTO=${AUTO:-0}
 	INTERVAL=$(get interval); INTERVAL=${INTERVAL:-3}
 	TARGET=$(get delay_target_ms); TARGET=${TARGET:-15}
 	HOSTS=$(get ping_hosts); HOSTS=${HOSTS:-223.5.5.5 119.29.29.29}
-	bool "$ENABLED" && bool "$AUTO" || { error 'enabled/autorate must be 0 or 1'; return 1; }
+	bool "$ENABLED" && bool "$AUTO" && bool "$DOWN_ENABLED" || { error 'enabled/autorate/download_enabled must be 0 or 1'; return 1; }
 	[ "$IFACE" = eth2 ] || { error 'Only USB modem eth2 egress is supported'; return 1; }
 	[ "$ENABLED" = 1 ] || return 0
 	bounded "$RATE" 128 1000000 || { error 'upload_kbit must be 128..1000000'; return 1; }
+	if [ "$DOWN_ENABLED" = 1 ]; then
+		bounded "$DOWN_RATE" 128 1000000 || { error 'download_kbit must be 128..1000000 when download shaping is enabled'; return 1; }
+	fi
 	if [ "$AUTO" = 1 ]; then
 		bounded "$MIN" 128 1000000 && bounded "$MAX" 128 1000000 && [ "$MIN" -le "$RATE" ] && [ "$RATE" -le "$MAX" ] || { error 'Autorate requires measured bounds: 128 <= min <= upload <= max <= 1000000'; return 1; }
+		if [ "$DOWN_ENABLED" = 1 ]; then
+			bounded "$DOWN_MIN" 128 1000000 && bounded "$DOWN_MAX" 128 1000000 && [ "$DOWN_MIN" -le "$DOWN_RATE" ] && [ "$DOWN_RATE" -le "$DOWN_MAX" ] || { error 'Download autorate requires measured bounds: 128 <= min <= download <= max <= 1000000'; return 1; }
+		fi
 	else
 		MIN=$RATE; MAX=$RATE
+		DOWN_MIN=$DOWN_RATE; DOWN_MAX=$DOWN_RATE
 	fi
 	# Hidden autorate fields must not prevent fixed-rate mode from starting.
 	if [ "$AUTO" != 1 ]; then INTERVAL=3; return 0; fi
@@ -128,6 +142,128 @@ queue_set() {
 	tc qdisc "$1" dev "$IFACE" root handle "$HANDLE" cake bandwidth "${2}kbit" \
 		besteffort flows nonat no-ack-filter no-split-gso rtt 100ms \
 		overhead 44 mpu 64 memlimit 4mb
+}
+down_queue_set() {
+	# Incoming packets retain their original tuple. No NAT lookups or marks
+	# are required. IFB reinjection skips the ingress classifier once, using
+	# the kernel's tc_skip_classify/redirected path rather than custom marks.
+	tc qdisc "$1" dev "$IFB" root handle "$DOWN_HANDLE" cake bandwidth "${2}kbit" \
+		besteffort flows nonat ingress no-ack-filter no-split-gso rtt 100ms \
+		overhead 44 mpu 64 memlimit 4mb
+}
+down_root_line() { tc qdisc show dev "$IFB" 2>/dev/null | awk '/ root / {print; exit}'; }
+ingress_line() { tc qdisc show dev "$IFACE" 2>/dev/null | awk '$2 == "ingress" || $2 == "clsact" {print; exit}'; }
+down_link_owned() {
+	[ -f "$STATE/down-owner" ] && [ -d "$SYS/class/net/$IFB" ] || return 1
+	[ "$(cat "$SYS/class/net/$IFB/ifindex" 2>/dev/null)" = "$(cat "$STATE/down-ifindex" 2>/dev/null)" ] || return 1
+	[ "$(cat "$SYS/class/net/$IFB/ifalias" 2>/dev/null)" = "c2000max-nrqos:$(cat "$STATE/down-session" 2>/dev/null)" ]
+}
+filter_is_ours() {
+	# tc emits changing installed/used times and hit counters even without
+	# -s on this target. Match only static headers and action semantics, not
+	# whole output snapshots. A pref bucket may contain multiple protocols,
+	# chains or handles; none of those may be deleted along with our rule.
+	awk '
+	{ sub(/\r$/, "") }
+	$1 == "filter" {
+		protocol=0; pref=0; kind=0; chain=0; handle=0
+		for (i=2; i<=NF; i++) {
+			k=$i
+			if (k=="parent") { if ($(++i)!="ffff:") bad=1 }
+			else if (k=="protocol") { if ($(++i)!="all") bad=1; protocol++ }
+			else if (k=="pref") { if ($(++i)!="365") bad=1; pref++ }
+			else if (k=="matchall") kind++
+			else if (k=="chain") { if ($(++i)!="0") bad=1; chain++ }
+			else if (k=="handle") { v=$(++i); if (v!="1" && v!="0x1") bad=1; handle++ }
+			else bad=1
+		}
+		if (protocol!=1 || pref!=1 || kind!=1 || chain!=1 || handle>1) bad=1
+		if (handle) rules++; else summaries++
+		next
+	}
+	$1 == "action" {
+		line=$0; sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line); gsub(/[ \t]+/, " ", line)
+		if (line!="action order 1: mirred (Egress Redirect to device ifb-nrqos) stolen" || rules!=1) bad=1
+		actions++; next
+	}
+	$1 == "skip_hw" { software++ }
+	$1 == "skip_sw" || $1 == "in_hw" { bad=1 }
+	END { exit (bad || rules!=1 || summaries>1 || actions!=1 || software!=1) ? 1 : 0 }'
+}
+down_filter_owned() {
+	local filters
+	case "$(ingress_line)" in 'qdisc ingress ffff: '*) :;; *) return 1;; esac
+	filters=$(tc filter show dev "$IFACE" parent "$INGRESS_HANDLE" pref "$FILTER_PREF" 2>/dev/null) || return 1
+	printf '%s\n' "$filters" | filter_is_ours
+}
+down_owned() {
+	down_link_owned && down_filter_owned || return 1
+	# No hidden competing ingress classifier may steal or reorder packets.
+	# Cleanup deliberately uses the weaker per-filter ownership check so a
+	# concurrently added foreign classifier will be preserved when we stop.
+	tc filter show dev "$IFACE" parent "$INGRESS_HANDLE" 2>/dev/null | filter_is_ours || return 1
+	case "$(down_root_line)" in "qdisc cake $DOWN_HANDLE root "*) return 0;; esac
+	return 1
+}
+down_preflight() {
+	# Reserve the whole ingress attachment point. Sharing it with IFB users,
+	# clsact filters or a pre-existing IFB would require unsafe ordering guesses.
+	if down_owned; then return 0; fi
+	[ ! -e "$SYS/class/net/$IFB" ] || { error 'Foreign or incomplete ifb-nrqos interface exists; not modified'; return 1; }
+	[ -z "$(ingress_line)" ] || { error 'Foreign ingress/clsact qdisc detected; not modified'; return 1; }
+	[ -z "$(tc filter show dev "$IFACE" ingress 2>/dev/null)" ] || { error 'Foreign ingress filters detected; not modified'; return 1; }
+}
+down_cleanup() {
+	local expected=$1 current_alias current_index filters line
+	[ -n "$expected" ] && [ "$(cat "$STATE/down-session" 2>/dev/null)" = "$expected" ] || return 0
+	# Remove only the redirect we installed. A foreign filter on the same
+	# attachment point survives; it also prevents removal of the ingress root.
+	if down_filter_owned; then
+		tc filter del dev "$IFACE" parent "$INGRESS_HANDLE" protocol all pref "$FILTER_PREF" chain 0 handle 1 matchall || { error 'Could not remove download redirect; IFB retained'; return 1; }
+	fi
+	filters=$(tc filter show dev "$IFACE" parent "$INGRESS_HANDLE" 2>/dev/null) || { error 'Cannot inspect ingress filters; download resources retained'; return 1; }
+	if printf '%s\n' "$filters" | grep -q "Redirect to device $IFB)"; then
+		error 'Another redirect still uses ifb-nrqos; retained to avoid a traffic blackhole'; return 1
+	fi
+	if [ -f "$STATE/down-ingress" ] && [ -z "$filters" ]; then
+		case "$(ingress_line)" in 'qdisc ingress ffff: '*)
+			tc qdisc del dev "$IFACE" handle "$INGRESS_HANDLE" ingress || { error 'Could not remove owned ingress qdisc'; return 1; };;
+		esac
+	fi
+	if [ -e "$SYS/class/net/$IFB" ]; then
+		current_index=$(cat "$SYS/class/net/$IFB/ifindex" 2>/dev/null)
+		current_alias=$(cat "$SYS/class/net/$IFB/ifalias" 2>/dev/null)
+		[ -n "$current_index" ] && [ "$current_index" = "$(cat "$STATE/down-ifindex" 2>/dev/null)" ] || { error 'IFB identity changed; foreign interface retained'; return 1; }
+		# An unset alias is accepted only during a failed initial link setup.
+		if [ "$current_alias" != "c2000max-nrqos:$expected" ]; then
+			[ -z "$current_alias" ] && [ ! -f "$STATE/down-alias" ] || { error 'IFB ownership changed; foreign interface retained'; return 1; }
+		fi
+		line=$(down_root_line)
+		case "$line" in "qdisc cake $DOWN_HANDLE root "*|'') :;; *)
+			# A newly brought-up IFB can have the same kernel default as eth2
+			# until CAKE is attached. Accept only the exact recoverable default.
+			default_root "$line" >/dev/null || { error 'Foreign IFB qdisc detected; interface retained'; return 1; };;
+		esac
+		ip link del dev "$IFB" || { error 'Could not remove owned IFB interface'; return 1; }
+	fi
+	rm -f "$STATE/down-owner" "$STATE/down-session" "$STATE/down-ifindex" "$STATE/down-alias" "$STATE/down-ingress" \
+		"$STATE/download-rate" "$STATE/download-load" "$STATE/download-delay" "$STATE/download-probes" "$STATE/download-autorate-state"
+}
+down_setup() {
+	local token=$1
+	printf '%s\n' "$token" > "$STATE/down-session"
+	printf 'c2000max-nrqos-v2\n' > "$STATE/down-owner"
+	ip link add name "$IFB" type ifb || return 1
+	cat "$SYS/class/net/$IFB/ifindex" > "$STATE/down-ifindex" || return 1
+	ip link set dev "$IFB" alias "c2000max-nrqos:$token" || return 1
+	: > "$STATE/down-alias"
+	ip link set dev "$IFB" up || return 1
+	down_queue_set replace "$DOWN_RATE" || return 1
+	tc qdisc add dev "$IFACE" handle "$INGRESS_HANDLE" ingress || return 1
+	: > "$STATE/down-ingress"
+	tc filter add dev "$IFACE" parent "$INGRESS_HANDLE" protocol all pref "$FILTER_PREF" chain 0 handle 1 matchall skip_hw \
+		action mirred egress redirect dev "$IFB" || return 1
+	down_owned
 }
 default_root() {
 	# Accept only the kernel's unconfigured defaults. Custom fq_codel settings
@@ -169,6 +305,7 @@ topology() {
 	[ "$default_dev" = "$IFACE" ] || { error 'Primary IPv4 default route is not eth2; NR QoS requires primary 5G mode'; return 1; }
 }
 start_queue() {
+	local other queue_token line original up_existing down_existing old_down_rate old_down_token
 	config || return 1
 	[ "$ENABLED" = 1 ] || { stop_all; return $?; }
 	command -v tc >/dev/null && command -v jq >/dev/null || { error 'tc with CAKE support and jq are required'; return 1; }
@@ -181,39 +318,100 @@ start_queue() {
 		unlock; error 'Supervisor active; use service restart to change settings'; return 1
 	fi
 	queue_token=${RUN_TOKEN:-manual:$(process_token "$$")}
-	if owned; then
-		queue_set change "$RATE" || { unlock; error 'Could not update CAKE; previous queue is retained'; return 1; }
-		printf '%s\n' "$queue_token" > "$STATE/queue-session"
-	else
+	up_existing=0; owned && up_existing=1
+	down_existing=0; down_owned && down_existing=1
+	old_down_rate=$(cat "$STATE/download-rate" 2>/dev/null)
+	old_down_token=$(cat "$STATE/down-session" 2>/dev/null)
+	if [ "$up_existing" != 1 ]; then
 		line=$(root_line)
 		original=$(default_root "$line") || { unlock; error 'Foreign/non-default root qdisc detected; not modified'; return 1; }
+	fi
+	if [ "$DOWN_ENABLED" = 1 ]; then
+		down_preflight || { unlock; return 1; }
+		if [ "$down_existing" = 1 ]; then
+			bounded "$old_down_rate" 128 1000000 || { unlock; error 'Download recovery rate is missing; stop the service before retrying'; return 1; }
+			down_queue_set change "$DOWN_RATE" || { unlock; error 'Could not update download CAKE; previous queues retained'; return 1; }
+			if [ "$old_down_token" != "$queue_token" ]; then
+				if ! ip link set dev "$IFB" alias "c2000max-nrqos:$queue_token"; then
+					down_queue_set change "$old_down_rate" || :
+					unlock; error 'Could not transfer IFB ownership; previous queues retained'; return 1
+				fi
+				printf '%s\n' "$queue_token" > "$STATE/down-session"
+			fi
+		else
+			if ! down_setup "$queue_token"; then
+				down_cleanup "$queue_token" || :
+				unlock; error 'Download setup failed; existing upload queue retained and new resources rolled back where still owned'; return 1
+			fi
+		fi
+	fi
+	if [ "$DOWN_ENABLED" != 1 ] && [ -n "$old_down_token" ]; then
+		# Perform a requested download teardown before changing upload rates,
+		# so a foreign IFB/recovery failure cannot leave upload state stale.
+		if ! down_cleanup "$old_down_token"; then
+			unlock; error 'Could not safely stop download shaping; existing upload queue retained'; return 1
+		fi
+	fi
+	if [ "$up_existing" = 1 ]; then
+		if ! queue_set change "$RATE"; then
+			if [ "$DOWN_ENABLED" = 1 ]; then
+				if [ "$down_existing" = 1 ]; then
+					down_queue_set change "$old_down_rate" || :
+					ip link set dev "$IFB" alias "c2000max-nrqos:$old_down_token" && printf '%s\n' "$old_down_token" > "$STATE/down-session"
+				else down_cleanup "$queue_token" || :; fi
+			fi
+			unlock; error 'Could not update upload CAKE; previous upload queue retained'; return 1
+		fi
+	else
 		# Record recovery information before replacing the default queue.
 		printf '%s\n' "$IFACE" > "$STATE/interface"
 		printf '%s\n' "$original" > "$STATE/original"
 		printf '%s\n' "$line" > "$STATE/original-qdisc"
-		printf 'c2000max-nrqos-v1\n' > "$STATE/owner"
+		printf 'c2000max-nrqos-v2\n' > "$STATE/owner"
 		printf '%s\n' "$queue_token" > "$STATE/queue-session"
 		if ! queue_set replace "$RATE"; then
 			if owned; then tc qdisc del dev "$IFACE" root handle "$HANDLE" 2>/dev/null || :; restore_default "$original" || :; fi
+			if [ "$DOWN_ENABLED" = 1 ]; then
+				if [ "$down_existing" = 1 ]; then
+					down_queue_set change "$old_down_rate" || :
+					ip link set dev "$IFB" alias "c2000max-nrqos:$old_down_token" && printf '%s\n' "$old_down_token" > "$STATE/down-session"
+				else down_cleanup "$queue_token" || :; fi
+			fi
 			rm -f "$STATE/owner" "$STATE/queue-session"
 			unlock; error 'CAKE setup failed; NR QoS was not activated'; return 1
 		fi
+	fi
+	printf '%s\n' "$queue_token" > "$STATE/queue-session"
+	if [ "$DOWN_ENABLED" = 1 ]; then
+		printf '%s\n' "$DOWN_RATE" > "$STATE/download-rate"
+		printf '0\n' > "$STATE/download-load"
+		printf '0\n' > "$STATE/download-delay"
+		if [ "$AUTO" = 1 ]; then printf 'starting\n'; else printf 'disabled-fixed-rate\n'; fi > "$STATE/download-probes"
 	fi
 	printf '%s\n' "$RATE" > "$STATE/rate"
 	printf '%s\n' "$AUTO" > "$STATE/autorate"
 	printf '0\n' > "$STATE/load"
 	printf '0\n' > "$STATE/delay"
 	if [ "$AUTO" = 1 ]; then printf 'starting\n'; else printf 'disabled-fixed-rate\n'; fi > "$STATE/probes"
-	rm -f "$STATE/error" "$STATE/autorate-state"
+	rm -f "$STATE/error" "$STATE/autorate-state" "$STATE/download-autorate-state"
 	unlock
 }
 stop_queue() {
-	local expected=$1
+	local expected=$1 current_token down_failed=0
 	IFACE=$(cat "$STATE/interface" 2>/dev/null); IFACE=${IFACE:-eth2}
 	[ "$IFACE" = eth2 ] || { error 'Invalid runtime interface; not modifying a queue'; return 1; }
 	lock || { error 'NR QoS is busy'; return 1; }
 	# A delayed old supervisor must never delete a newer session's queue.
-	[ -n "$expected" ] && [ "$(cat "$STATE/queue-session" 2>/dev/null)" = "$expected" ] || { unlock; return 0; }
+	current_token=$(cat "$STATE/queue-session" 2>/dev/null)
+	[ -n "$expected" ] || { unlock; return 0; }
+	if [ "$current_token" != "$expected" ]; then
+		# A failed initial setup may leave only download recovery state.
+		[ -z "$current_token" ] && [ "$(cat "$STATE/down-session" 2>/dev/null)" = "$expected" ] || { unlock; return 0; }
+	fi
+	# A foreign IFB qdisc or failed redirect cleanup must not strand our own
+	# upload shaper after the user disables this service. Keep download
+	# recovery state, but independently remove only our matching upload root.
+	down_cleanup "$expected" || down_failed=1
 	if owned; then
 		original=$(cat "$STATE/original" 2>/dev/null)
 		if ! tc qdisc del dev "$IFACE" root handle "$HANDLE"; then unlock; error 'Could not remove owned CAKE queue'; return 1; fi
@@ -222,6 +420,7 @@ stop_queue() {
 	# If another plugin replaced our qdisc, leave its queue entirely alone.
 	rm -f "$STATE/owner" "$STATE/queue-session" "$STATE/rate" "$STATE/autorate" "$STATE/interface" "$STATE/original" "$STATE/load" "$STATE/delay" "$STATE/probes" "$STATE/autorate-state"
 	unlock
+	[ "$down_failed" = 0 ]
 }
 release_session() {
 	local expected=$1
@@ -239,6 +438,7 @@ stop_all() {
 	lock || { error 'NR QoS is busy'; return 1; }
 	token=$(cat "$STATE/session" 2>/dev/null)
 	qtoken=$(cat "$STATE/queue-session" 2>/dev/null)
+	[ -n "$qtoken" ] || qtoken=$(cat "$STATE/down-session" 2>/dev/null)
 	unlock
 	if [ -n "$token" ] && session_alive "$token"; then
 		kill -TERM "${token%%:*}" || { error 'Cannot stop NR QoS supervisor'; return 1; }
@@ -253,14 +453,24 @@ stop_all() {
 	[ -z "$qtoken" ] || stop_queue "$qtoken"
 }
 change_rate() {
-	bounded "$1" "$MIN" "$MAX" || return 1
+	local direction=$1 next=$2
+	if [ "$direction" = download ]; then bounded "$next" "$DOWN_MIN" "$DOWN_MAX" || return 1
+	else bounded "$next" "$MIN" "$MAX" || return 1; fi
 	lock || return 1
 	if ! owned || [ "$(cat "$STATE/queue-session" 2>/dev/null)" != "$RUN_TOKEN" ]; then unlock; error 'Queue ownership was lost; autorate stopped'; return 1; fi
-	if queue_set change "$1"; then printf '%s\n' "$1" > "$STATE/rate"; unlock; return 0; fi
+	if [ "$direction" = download ]; then
+		if ! down_owned || [ "$(cat "$STATE/down-session" 2>/dev/null)" != "$RUN_TOKEN" ]; then unlock; error 'Download queue ownership was lost; autorate stopped'; return 1; fi
+		if down_queue_set change "$next"; then printf '%s\n' "$next" > "$STATE/download-rate"; unlock; return 0; fi
+	elif queue_set change "$next"; then printf '%s\n' "$next" > "$STATE/rate"; unlock; return 0
+	fi
 	unlock; error 'CAKE rate update failed; previous rate retained'; return 1
 }
 uptime_ms() { awk '{printf "%.0f\n", $1*1000}' "${C2000MAX_NRQOS_UPTIME:-/proc/uptime}"; }
-queue_bytes() { tc -s qdisc show dev "$IFACE" | awk '/^qdisc cake 365: / {on=1;next} /^qdisc / {on=0} on && /Sent / {print $2;exit}'; }
+queue_bytes() {
+	local dev=$IFACE handle=$HANDLE
+	[ "${1:-upload}" != download ] || { dev=$IFB; handle=$DOWN_HANDLE; }
+	tc -s qdisc show dev "$dev" | awk -v h="$handle" '$1=="qdisc" && $2=="cake" && $3==h {on=1;next} /^qdisc / {on=0} on && /Sent / {print $2;exit}'
+}
 sample() {
 	# A private temporary input is moved atomically; malformed responses never
 	# become shell code and each target uses its own learned RTT baseline.
@@ -272,6 +482,39 @@ sample() {
 	done
 	mv "$STATE/samples.new" "$STATE/samples"
 }
+sample_direction() {
+	local direction=$1 delta=$2 elapsed=$3 prefix minimum maximum base current load observed result next delay healthy decision
+	if [ "$direction" = download ]; then
+		prefix=download-; minimum=$DOWN_MIN; maximum=$DOWN_MAX; base=$DOWN_RATE
+	else
+		prefix=; minimum=$MIN; maximum=$MAX; base=$RATE
+	fi
+	current=$(cat "$STATE/${prefix}rate")
+	load=$(awk -v b="$delta" -v ms="$elapsed" -v r="$current" 'BEGIN {printf "%.0f", b*8*100/ms/r}')
+	observed=$(awk -v b="$delta" -v ms="$elapsed" 'BEGIN {printf "%.0f", b*8/ms}')
+	printf '%s\n' "$load" > "$STATE/${prefix}load"
+	[ "$AUTO" = 1 ] || return 0
+	[ -f "$STATE/${prefix}autorate-state" ] || : > "$STATE/${prefix}autorate-state"
+	result=$(awk -v current="$current" -v minimum="$minimum" -v maximum="$maximum" -v target="$TARGET" -v utilization="$load" \
+		-v observed_kbit="$observed" -v base_rate="$base" -v state_out="$STATE/${prefix}autorate-state.new" -f "$RATE_AWK" \
+		"$STATE/${prefix}autorate-state" "$STATE/samples") || { error 'Autorate calculation failed'; return 1; }
+	[ -f "$STATE/${prefix}autorate-state.new" ] || { error 'Autorate recovery state missing'; return 1; }
+	set -- $result
+	[ "$#" = 4 ] || { error 'Invalid autorate result'; return 1; }
+	next=$1; delay=$2; healthy=$3; decision=$4
+	bounded "$next" "$minimum" "$maximum" && uint "$delay" && bounded "$healthy" 0 3 || { error 'Invalid autorate output bounds'; return 1; }
+	case "$decision" in ''|*[!a-z-]*) error 'Invalid autorate decision'; return 1;; esac
+	mv "$STATE/${prefix}autorate-state.new" "$STATE/${prefix}autorate-state"
+	printf '%s\n' "$delay" > "$STATE/${prefix}delay"
+	printf '%s:%s\n' "$healthy" "$decision" > "$STATE/${prefix}probes"
+	[ "$next" = "$current" ] || change_rate "$direction" "$next"
+}
+check_ownership() {
+	if ! owned || [ "$(cat "$STATE/queue-session" 2>/dev/null)" != "$RUN_TOKEN" ]; then error 'Queue ownership was lost; service stopped without touching the new queue'; return 1; fi
+	if [ "$DOWN_ENABLED" = 1 ] && { ! down_owned || [ "$(cat "$STATE/down-session" 2>/dev/null)" != "$RUN_TOKEN" ]; }; then
+		error 'Download queue ownership was lost; service stopped without touching foreign resources'; return 1
+	fi
+}
 run_loop() {
 	config || return 1
 	[ "$ENABLED" = 1 ] || { stop_all; return $?; }
@@ -279,46 +522,46 @@ run_loop() {
 	trap 'exit 0' TERM INT
 	trap 'run_cleanup' EXIT
 	start_queue || return 1
-	last_time=$(uptime_ms); last_bytes=$(queue_bytes)
+	last_time=$(uptime_ms); last_bytes=$(queue_bytes upload)
+	last_down_bytes=0; [ "$DOWN_ENABLED" != 1 ] || last_down_bytes=$(queue_bytes download)
 	while :; do
 		# Short waits allow SIGTERM cleanup even when interval is configured 30s.
 		pause=$INTERVAL
-		while [ "$pause" -gt 0 ]; do sleep 1; pause=$((pause-1)); done
-		if ! owned || [ "$(cat "$STATE/queue-session" 2>/dev/null)" != "$RUN_TOKEN" ]; then error 'Queue ownership was lost; service stopped without touching the new queue'; return 1; fi
+		while [ "$pause" -gt 0 ]; do sleep 1; pause=$((pause-1)); check_ownership || return 1; done
 		topology && conflicts || return 1
 		[ "$AUTO" != 1 ] || sample
-		now=$(uptime_ms); bytes=$(queue_bytes); current=$(cat "$STATE/rate")
-		case "$bytes:$last_bytes" in *[!0-9:]*|:*|*:) last_time=$now; last_bytes=$bytes; continue;; esac
-		elapsed=$((now-last_time)); delta=$((bytes-last_bytes)); last_time=$now; last_bytes=$bytes
-		[ "$elapsed" -gt 0 ] && [ "$delta" -ge 0 ] || continue
-		load=$(awk -v b="$delta" -v ms="$elapsed" -v r="$current" 'BEGIN {printf "%.0f", b*8*100/ms/r}')
-		printf '%s\n' "$load" > "$STATE/load"
-		[ "$AUTO" = 1 ] || continue
-		[ -f "$STATE/autorate-state" ] || : > "$STATE/autorate-state"
-		result=$(awk -v current="$current" -v minimum="$MIN" -v maximum="$MAX" -v target="$TARGET" -v utilization="$load" \
-			-v state_out="$STATE/autorate-state.new" -f "$RATE_AWK" "$STATE/autorate-state" "$STATE/samples") || { error 'Autorate calculation failed'; return 1; }
-		mv "$STATE/autorate-state.new" "$STATE/autorate-state"
-		set -- $result
-		[ "$#" = 4 ] || { error 'Invalid autorate result'; return 1; }
-		next=$1; delay=$2; healthy=$3; decision=$4
-		printf '%s\n' "$delay" > "$STATE/delay"
-		printf '%s:%s\n' "$healthy" "$decision" > "$STATE/probes"
-		[ "$next" = "$current" ] || change_rate "$next" || return 1
+		now=$(uptime_ms); bytes=$(queue_bytes upload)
+		down_bytes=0; [ "$DOWN_ENABLED" != 1 ] || down_bytes=$(queue_bytes download)
+		elapsed=$((now-last_time)); last_time=$now
+		case "$bytes:$last_bytes" in *[!0-9:]*|:*|*:) delta=-1;; *) delta=$((bytes-last_bytes));; esac
+		case "$down_bytes:$last_down_bytes" in *[!0-9:]*|:*|*:) down_delta=-1;; *) down_delta=$((down_bytes-last_down_bytes));; esac
+		last_bytes=$bytes; last_down_bytes=$down_bytes
+		[ "$elapsed" -gt 0 ] || continue
+		if [ "$delta" -ge 0 ]; then sample_direction upload "$delta" "$elapsed" || return 1; fi
+		if [ "$DOWN_ENABLED" = 1 ] && [ "$down_delta" -ge 0 ]; then sample_direction download "$down_delta" "$elapsed" || return 1; fi
 	done
 }
 status() {
 	IFACE=$(cat "$STATE/interface" 2>/dev/null); IFACE=${IFACE:-eth2}
 	active=false; owned && active=true
+	down_active=false; down_owned && down_active=true
+	down_enabled=$(get download_enabled); [ "$down_enabled" = 1 ] && down_enabled=true || down_enabled=false
 	enabled=$(get enabled); [ "$enabled" = 1 ] && enabled=true || enabled=false
 	rate=$(cat "$STATE/rate" 2>/dev/null); uint "$rate" || rate=0
 	load=$(cat "$STATE/load" 2>/dev/null); uint "$load" || load=0
 	delay=$(cat "$STATE/delay" 2>/dev/null); uint "$delay" || delay=0
 	auto=$(cat "$STATE/autorate" 2>/dev/null); [ "$auto" = 1 ] && auto=true || auto=false
+	down_rate=$(cat "$STATE/download-rate" 2>/dev/null); uint "$down_rate" || down_rate=0
+	down_load=$(cat "$STATE/download-load" 2>/dev/null); uint "$down_load" || down_load=0
+	down_delay=$(cat "$STATE/download-delay" 2>/dev/null); uint "$down_delay" || down_delay=0
 	jq -n --argjson enabled "$enabled" --argjson active "$active" --arg interface "$IFACE" \
 		--argjson upload_kbit "$rate" --argjson autorate "$auto" --argjson load_percent "$load" \
 		--argjson delay_ms "$delay" --arg probes "$(cat "$STATE/probes" 2>/dev/null)" \
+		--argjson download_enabled "$down_enabled" --argjson download_active "$down_active" --argjson download_kbit "$down_rate" \
+		--argjson download_load_percent "$down_load" --argjson download_delay_ms "$down_delay" \
+		--arg download_probes "$(cat "$STATE/download-probes" 2>/dev/null)" \
 		--arg error "$(cat "$STATE/error" 2>/dev/null)" \
-		'{enabled:$enabled,active:$active,interface:$interface,upload_kbit:$upload_kbit,autorate:$autorate,load_percent:$load_percent,delay_ms:$delay_ms,probes:$probes,error:$error,direction:"upload",scheduler:"cake",hnat_control:"untouched",dataplane_verified:false}'
+		'{api_version:2,enabled:$enabled,active:$active,interface:$interface,upload_kbit:$upload_kbit,autorate:$autorate,load_percent:$load_percent,delay_ms:$delay_ms,probes:$probes,error:$error,download_enabled:$download_enabled,download_active:$download_active,download_kbit:$download_kbit,download_load_percent:$download_load_percent,download_delay_ms:$download_delay_ms,download_probes:$download_probes,direction:(if $download_active then "bidirectional" else "upload" end),scheduler:"cake",hnat_control:"untouched",dataplane_verified:false}'
 }
 
 trap 'unlock' EXIT

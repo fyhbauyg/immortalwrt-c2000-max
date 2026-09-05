@@ -10,18 +10,65 @@ uci)
 		*) exit 1;;
 	esac;;
 tc)
+	dev=eth2; prev=
+	for arg in "$@"; do [ "$prev" != dev ] || dev=$arg; prev=$arg; done
+	qdisc="$MOCK/qdisc"; [ "$dev" != ifb-nrqos ] || qdisc="$MOCK/down-qdisc"
 	case " $* " in
-		*' qdisc show '*|*' -s qdisc show '*) cat "$MOCK/qdisc"; case " $* " in *' -s '*) printf ' Sent 1000000 bytes 1000 pkt (dropped 0, overlimits 0 requeues 0)\n';; esac; exit 0;;
+		*' qdisc show '*|*' -s qdisc show '*)
+			cat "$qdisc" 2>/dev/null || :
+			case " $* " in *' -s '*) printf ' Sent 1000000 bytes 1000 pkt (dropped 0, overlimits 0 requeues 0)\n';; esac
+			[ "$dev" != eth2 ] || cat "$MOCK/ingress" 2>/dev/null || :
+			exit 0;;
+		*' filter show '*)
+			[ ! -e "$MOCK/filter-read-fail" ] || exit 1
+			cat "$MOCK/filters" 2>/dev/null || :
+			if [ -f "$MOCK/filter-clock" ] && [ -s "$MOCK/filters" ]; then
+				clock=$(cat "$MOCK/filter-clock"); clock=$((clock+1)); printf '%s\n' "$clock" > "$MOCK/filter-clock"
+				printf '\tindex 1 ref 1 bind 1 installed %s sec used %s sec firstused %s sec\n\tAction statistics:\n\tSent %s bytes %s pkt (dropped 0, overlimits 0 requeues 0)\n' "$clock" "$clock" "$clock" "$((clock*1400))" "$clock"
+			fi
+			cat "$MOCK/same-pref-filters" 2>/dev/null || :
+			case " $* " in *' pref 365 '*) :;; *) cat "$MOCK/foreign-filters" 2>/dev/null || :;; esac
+			exit 0;;
 	esac
 	printf '%s\n' "$*" >> "$MOCK/tc.log"
 	[ ! -f "$MOCK/tc-fail" ] || exit 1
+	if [ -f "$MOCK/fail-match" ] && printf '%s\n' "$*" | grep -Fq "$(cat "$MOCK/fail-match")"; then exit 1; fi
+	handle=365:; [ "$dev" != ifb-nrqos ] || handle=366:
 	case " $* " in
-		*' qdisc change '*) [ ! -f "$MOCK/tc-fail-change" ] || exit 1; printf 'qdisc cake 365: root refcnt 2\n' > "$MOCK/qdisc";;
-		*' qdisc replace '*) printf 'qdisc cake 365: root refcnt 2\n' > "$MOCK/qdisc";;
-		*' qdisc del '*) printf 'qdisc fq_codel 0: root refcnt 2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 4Mb ecn drop_batch 64\n' > "$MOCK/qdisc";;
+		*' qdisc add '*|*' qdisc del '*' ingress '*)
+			case " $* " in
+				*' add '*) [ ! -s "$MOCK/ingress" ] || exit 1; printf 'qdisc ingress ffff: parent ffff:fff1 ----------------\n' > "$MOCK/ingress";;
+				*) rm -f "$MOCK/ingress";;
+			esac;;
+		*' filter add '*)
+			# Real C2000MAX tc output: the summary header has no handle; the
+			# detailed header identifies the single classifier instance.
+			printf 'filter parent ffff: protocol all pref 365 matchall chain 0 \nfilter parent ffff: protocol all pref 365 matchall chain 0 handle 0x1 \n  skip_hw\n  not_in_hw (rule hit 4273)\n\taction order 1: mirred (Egress Redirect to device ifb-nrqos) stolen\n\tindex 1 ref 1 bind 1 installed 8 sec firstused 8 sec\n\tAction statistics:\n\tSent 4433735 bytes 4273 pkt (dropped 0, overlimits 0 requeues 0)\n\tbacklog 0b 0p requeues 0\n' > "$MOCK/filters";;
+		*' filter del '*) rm -f "$MOCK/filters";;
+		*' qdisc change '*) [ ! -f "$MOCK/tc-fail-change" ] || exit 1; printf 'qdisc cake %s root refcnt 2\n' "$handle" > "$qdisc";;
+		*' qdisc replace '*) printf 'qdisc cake %s root refcnt 2\n' "$handle" > "$qdisc";;
+		*' qdisc del '*) printf 'qdisc fq_codel 0: root refcnt 2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 4Mb ecn drop_batch 64\n' > "$qdisc";;
 		*) exit 1;;
 	esac;;
-ip) printf 'default via 10.0.0.1 dev %s proto dhcp\n' "$(cat "$MOCK/default")";;
+ip)
+	case " $* " in *' route show default '*) printf 'default via 10.0.0.1 dev %s proto dhcp\n' "$(cat "$MOCK/default")"; exit 0;; esac
+	printf '%s\n' "$*" >> "$MOCK/ip.log"
+	if [ -f "$MOCK/fail-match" ] && printf '%s\n' "$*" | grep -Fq "$(cat "$MOCK/fail-match")"; then exit 1; fi
+	case " $* " in
+		*' link add name ifb-nrqos type ifb '*)
+			mkdir "$MOCK/sys/class/net/ifb-nrqos" || exit 1
+			printf '99\n' > "$MOCK/sys/class/net/ifb-nrqos/ifindex"
+			: > "$MOCK/sys/class/net/ifb-nrqos/ifalias"
+			printf 'qdisc noqueue 0: root refcnt 2\n' > "$MOCK/down-qdisc";;
+		*' link set dev ifb-nrqos alias '*) shift 5; printf '%s\n' "$1" > "$MOCK/sys/class/net/ifb-nrqos/ifalias";;
+		*' link set dev ifb-nrqos up '*)
+			test -d "$MOCK/sys/class/net/ifb-nrqos" || exit 1
+			printf 'qdisc fq_codel 0: root refcnt 2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 4Mb ecn drop_batch 64\n' > "$MOCK/down-qdisc";;
+		*' link del dev ifb-nrqos '*)
+			rm -f "$MOCK/sys/class/net/ifb-nrqos/ifalias" "$MOCK/sys/class/net/ifb-nrqos/ifindex" "$MOCK/down-qdisc"
+			rmdir "$MOCK/sys/class/net/ifb-nrqos";;
+		*) exit 1;;
+	esac;;
 logger) :;;
 sleep)
 	# Match the target BusyBox feature set; accelerate valid integer waits.

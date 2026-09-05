@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
 PKG_VERSION:=2.36.5
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -14,7 +14,7 @@ define Package/c2000max-board
 	DEPENDS:=+qmodem +luci-base +jq +jsonfilter +ip-full +firewall4 \
 	+kmod-dummy +kmod-mediatek_hnat +mtkhnat_util +hnat-detect \
 	+luci-app-turboacc-mtk +luci-app-eqos-mtk +luci-app-c2000max-traffic \
-	+mwan3 +coreutils-timeout +tc +kmod-sched-cake \
+	+mwan3 +coreutils-timeout +tc +kmod-sched-cake +kmod-ifb \
 	+flock +uboot-envtools +zram-swap +gawk +grep +sed +coreutils-sort +sfdisk +mwctl
 endef
 

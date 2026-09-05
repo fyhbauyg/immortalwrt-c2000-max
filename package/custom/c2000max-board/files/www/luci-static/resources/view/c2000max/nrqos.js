@@ -44,7 +44,11 @@ function validateProbes(values) {
 }
 
 function probeStatus(value) {
-	var labels = { hold: _('保持'), increase: _('提高限速'), decrease: _('降低限速'), warming: _('基线预热'), idle: _('空闲'), 'probe-loss': _('探测无响应') };
+	var labels = { hold: _('保持'), increase: _('提高限速'), decrease: _('降低限速'), warming: _('基线预热'), idle: _('空闲'), 'probe-loss': _('探测无响应'),
+		'decrease-trial': _('试降速并观察延迟'), 'trial-observe': _('观察试降速效果'), 'trial-accepted': _('延迟改善，保留试验速率'),
+		'trial-unresponsive-restore': _('延迟未改善，恢复原速率'), 'trial-idle-restore': _('流量结束，恢复原速率'),
+		'probe-loss-restore': _('探测丢失，恢复原速率'), 'delay-unresponsive': _('延迟未随限速改善，暂停探底'),
+		recovered: _('延迟恢复'), cooldown: _('等待调速稳定'), 'idle-to-base': _('空闲回归基础速率'), 'at-minimum': _('已到设定下限') };
 	var match = /^(\d+):([a-z-]+)$/.exec(String(value || ''));
 	if (match)
 		return _('%s 个健康目标 · %s').format(match[1], labels[match[2]] || match[2]);
@@ -53,7 +57,10 @@ function probeStatus(value) {
 
 function renderStatus(data) {
 	var enabled = flag(data.enabled), active = flag(data.active);
-	var state = active ? _('上行 CAKE 队列运行中') : (enabled ? _('配置已启用，队列未运行') : _('已关闭'));
+	var downActive = flag(data.download_active), downEnabled = flag(data.download_enabled);
+	var state = active ? (downActive ? _('双向 CAKE 队列运行中') : _('上行 CAKE 队列运行中')) : (enabled ? _('配置已启用，队列未运行') : _('已关闭'));
+	if (active && downEnabled && !downActive)
+		state = _('下行队列未就绪，请检查错误');
 	if (active && !enabled)
 		state = _('队列仍在运行，等待停止');
 	if (data._rpc_error || data.active == null)
@@ -61,6 +68,7 @@ function renderStatus(data) {
 	var rows = [
 		[ _('运行状态'), state ],
 		[ _('当前上行限速'), active ? rate(data.upload_kbit) : '—' ],
+		[ _('当前下行限速'), downActive ? rate(data.download_kbit) : _('未启用 / 未运行') ],
 		[ _('硬件加速'), _('本功能不修改 HNAT 开关；硬件命中与延迟改善仍需流量实测。') ]
 	];
 	if (active && flag(data.autorate)) {
@@ -70,6 +78,11 @@ function renderStatus(data) {
 		rows.push([ _('RTT 抬升 / 上行负载'), '%s / %s'.format(
 			isFinite(delay) && delay >= 0 ? '%.1f ms'.format(delay) : '—',
 			isFinite(load) && load >= 0 ? '%.0f%%'.format(load) : '—') ]);
+		if (downActive) {
+			rows.push([ _('下行自适应状态'), probeStatus(data.download_probes) ]);
+			rows.push([ _('RTT 抬升 / 下行负载'), '%s ms / %s%%'.format(
+				Number(data.download_delay_ms) || 0, Number(data.download_load_percent) || 0) ]);
+		}
 	}
 	var content = [ E('table', { 'class': 'table' }, rows.map(function(row) {
 		return E('tr', { 'class': 'tr' }, [
@@ -81,6 +94,8 @@ function renderStatus(data) {
 		content.push(E('p', { 'class': 'alert-message warning' }, [ _('未生效原因 / 最近错误：'), String(data.error) ]));
 	if (data._rpc_error)
 		content.push(E('p', { 'class': 'alert-message warning' }, _('无法读取运行状态，请检查服务与 RPC 是否可用。')));
+	else if (data.active != null && data.api_version !== 2)
+		content.push(E('p', { 'class': 'alert-message warning' }, _('后端仍为旧版本，当前不支持下行整形；请确认已更新到 NRQOS2 固件。')));
 	return E('div', {}, content);
 }
 
@@ -95,7 +110,7 @@ return view.extend({
 
 	render: function(status) {
 		var m = new form.Map('c2000max_nrqos', _('5G NR 低延迟 QoS'),
-			_('实验性上行整形：使用 CAKE 公平排队，减少上传占满时的排队延迟。只支持默认出口为 eth2 的纯 5G 模式，不支持 WAN / 双 WAN，也不整形下行。'));
+			_('v2 双向整形：使用 CAKE 公平排队，同时处理上传及其他设备下载占满的场景。下行在 eth2 接收入口经 IFB 整形；只支持默认出口为 eth2 的 5G 模式，不支持完整的 WAN / 双 WAN 整形。'));
 		var s = m.section(form.NamedSection, 'main', 'main', _('队列设置'));
 		s.addremove = false;
 		s.anonymous = true;
@@ -118,15 +133,29 @@ return view.extend({
 		upload.depends('enabled', '1');
 		upload.description = _('1000 kbit/s = 1 Mbit/s。若通常上行为 150 Mbit/s，可从 130000 开始测试；这不是保证速率。限速必须低于当前可用上行带宽才有整形效果。');
 
-		var autorate = s.option(form.Flag, 'autorate', _('自适应上行限速（实验）'));
+		var downloadEnabled = s.option(form.Flag, 'download_enabled', _('同时整形下行'));
+		downloadEnabled.default = '1';
+		downloadEnabled.rmempty = false;
+		downloadEnabled.retain = true;
+		downloadEnabled.depends('enabled', '1');
+		downloadEnabled.description = _('减少其他设备下载造成的排队；旧配置缺少此项时不会在后台自动开启，请保存并应用。');
+		var download = s.option(form.Value, 'download_kbit', _('下行限速（kbit/s）'));
+		download.default = '130000';
+		download.datatype = 'and(uinteger,range(128,1000000))';
+		download.rmempty = false;
+		download.retain = true;
+		download.depends({ enabled: '1', download_enabled: '1' });
+		download.description = _('常见下载 150 Mbit/s 可先试 130000；繁忙时容量更低则需降低此值。队列控制的是本地排队，无法保证消除基站本底延迟。');
+
+		var autorate = s.option(form.Flag, 'autorate', _('自适应双向限速（实验）'));
 		autorate.default = '0';
 		autorate.rmempty = false;
 		autorate.retain = true;
 		autorate.depends('enabled', '1');
-		autorate.description = _('根据上行负载和多个目标的 RTT 抬升调整队列速率，仅在出口速率接近当前上限时辅助调整，不能保证跟踪基站容量骤降。5G 信号变化也会影响 RTT，建议先验证固定限速，再启用此项。');
+		autorate.description = _('根据各方向实际流量与多个目标 RTT 调速。容量疑似下降时可能短暂大幅降低限速，若延迟没有改善则恢复并暂停探底。无法完全区分基站抖动与排队，请先验证固定双向限速。');
 
-		var minimum = s.option(form.Value, 'min_upload_kbit', _('自适应下限（kbit/s）'));
-		var maximum = s.option(form.Value, 'max_upload_kbit', _('自适应上限（kbit/s）'));
+		var minimum = s.option(form.Value, 'min_upload_kbit', _('上行自适应下限（kbit/s）'));
+		var maximum = s.option(form.Value, 'max_upload_kbit', _('上行自适应上限（kbit/s）'));
 		[ minimum, maximum ].forEach(function(option) {
 			option.datatype = 'and(uinteger,range(128,1000000))';
 			option.rmempty = false;
@@ -150,6 +179,28 @@ return view.extend({
 				return true;
 			return Number(minimum.formvalue(section_id)) <= Number(value) && Number(value) <= Number(maximum.formvalue(section_id))
 				? true : _('须满足：自适应下限 ≤ 上行限速 ≤ 自适应上限。');
+		};
+
+		var downMin = s.option(form.Value, 'min_download_kbit', _('下行自适应下限（kbit/s）'));
+		var downMax = s.option(form.Value, 'max_download_kbit', _('下行自适应上限（kbit/s）'));
+		[ downMin, downMax ].forEach(function(option) {
+			option.datatype = 'and(uinteger,range(128,1000000))';
+			option.rmempty = false;
+			option.retain = true;
+			option.depends({ enabled: '1', download_enabled: '1', autorate: '1' });
+			option.validate = function(section_id, value) {
+				if (!numberInRange(value, 128, 1000000)) return _('请输入 128 至 1000000 之间的整数。');
+				return Number(downMin.formvalue(section_id)) <= Number(download.formvalue(section_id)) &&
+					Number(download.formvalue(section_id)) <= Number(downMax.formvalue(section_id))
+					? true : _('须满足：下行自适应下限 ≤ 下行限速 ≤ 下行自适应上限。');
+			};
+		});
+		downMin.description = _('填写较差信号时仍能维持的无明显拥塞下载速度；不能为 0。');
+		download.validate = function(section_id, value) {
+			if (!numberInRange(value, 128, 1000000)) return _('请输入 128 至 1000000 之间的整数。');
+			if (!flag(autorate.formvalue(section_id))) return true;
+			return Number(downMin.formvalue(section_id)) <= Number(value) && Number(value) <= Number(downMax.formvalue(section_id))
+				? true : _('须满足：下行自适应下限 ≤ 下行限速 ≤ 下行自适应上限。');
 		};
 
 		o = s.option(form.Value, 'interval', _('探测间隔（秒）'));

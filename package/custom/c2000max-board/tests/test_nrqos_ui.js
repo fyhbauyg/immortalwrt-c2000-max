@@ -33,23 +33,37 @@ const ui = new Function('rpc', 'view', 'form', 'poll', 'dom', 'E', '_',
   { content: (node, value) => node.children = value }, E, value => value);
 
 (async () => {
-  const rendered = await ui.render({ enabled: true, active: true, upload_kbit: 130000, autorate: true, probes: '2:hold', delay_ms: 3, load_percent: 75 });
+  const rendered = await ui.render({ api_version: 2, enabled: true, active: true, upload_kbit: 130000, autorate: true, probes: '2:hold', delay_ms: 3, load_percent: 75, download_enabled: true, download_active: true, download_kbit: 125000, download_load_percent: 80, download_delay_ms: 4, download_probes: '2:hold' });
   const options = maps[0].options;
   const text = JSON.stringify(rendered);
   assert.match(text, /130000 kbit\/s（130\.0 Mbit\/s）/);
-  assert.match(text, /上行 CAKE 队列运行中/);
+  assert.match(text, /双向 CAKE 队列运行中/);
+  assert.match(text, /125000 kbit\/s（125\.0 Mbit\/s）/);
   assert.match(text, /2 个健康目标 · 保持/);
   assert.equal(polls[0].delay, 3);
   assert.equal(options.enabled.default, '0');
   assert.equal(options.autorate.default, '0');
+  assert.equal(options.download_enabled.default, '1');
+  assert.equal(options.download_kbit.default, '130000');
   options.enabled.valueForTest = '1';
   options.autorate.valueForTest = '0';
+  options.download_enabled.valueForTest = '1';
+  for (const value of ['128', '130000', '1000000']) assert.equal(options.download_kbit.validate('main', value), true);
+  for (const value of ['0', '-1', '127', '1.5', '1000001']) assert.notEqual(options.download_kbit.validate('main', value), true);
   for (const value of ['128', '130000', '1000000']) assert.equal(options.upload_kbit.validate('main', value), true);
   for (const value of ['0', '-1', '127', '1.5', '1000001']) assert.notEqual(options.upload_kbit.validate('main', value), true);
   options.autorate.valueForTest = '1';
   options.upload_kbit.valueForTest = '130000';
   options.min_upload_kbit.valueForTest = '50000';
   options.max_upload_kbit.valueForTest = '140000';
+  options.download_kbit.valueForTest = '130000';
+  options.min_download_kbit.valueForTest = '20000';
+  options.max_download_kbit.valueForTest = '150000';
+  assert.equal(options.download_kbit.validate('main', '130000'), true);
+  assert.equal(options.min_download_kbit.validate('main', '20000'), true);
+  options.max_download_kbit.valueForTest = '120000';
+  assert.notEqual(options.download_kbit.validate('main', '130000'), true);
+  options.max_download_kbit.valueForTest = '150000';
   assert.equal(options.upload_kbit.validate('main', '130000'), true);
   assert.equal(options.min_upload_kbit.validate('main', '50000'), true);
   options.max_upload_kbit.valueForTest = '120000';
@@ -66,7 +80,7 @@ const ui = new Function('rpc', 'view', 'form', 'poll', 'dom', 'E', '_',
   options.autorate.valueForTest = '0';
   options.ping_hosts.valueForTest = [];
   assert.equal(await options.ping_hosts.parse('main'), 'base-parse');
-  for (const name of ['upload_kbit', 'autorate', 'min_upload_kbit', 'max_upload_kbit', 'interval', 'delay_target_ms', 'ping_hosts']) assert.equal(options[name].retain, true);
+  for (const name of ['upload_kbit', 'download_enabled', 'download_kbit', 'min_download_kbit', 'max_download_kbit', 'autorate', 'min_upload_kbit', 'max_upload_kbit', 'interval', 'delay_target_ms', 'ping_hosts']) assert.equal(options[name].retain, true);
   const acl = JSON.parse(fs.readFileSync(path.join(__dirname, '../files/usr/share/rpcd/acl.d/c2000max-nrqos.json')));
   assert.deepEqual(acl['c2000max-nrqos'].write, { uci: ['c2000max_nrqos'] });
   assert.deepEqual(acl['c2000max-nrqos'].read.ubus, { 'c2000max-nrqos': ['status'] });
