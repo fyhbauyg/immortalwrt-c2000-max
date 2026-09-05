@@ -5,6 +5,7 @@
 # card-level profile makes the choice survive a driver reload and reboot.
 
 PROFILE_PATH="${C2000MAX_WIFI_PERF_PROFILE:-/etc/wireless/mediatek/mt7993.1.dat}"
+BAND_PROFILE_DIR="${C2000MAX_WIFI_PERF_BAND_DIR:-${PROFILE_PATH%/*}}"
 NET_CLASS_PATH="${C2000MAX_WIFI_PERF_NET_CLASS:-/sys/class/net}"
 FORCED_INTERFACE="${C2000MAX_WIFI_PERF_INTERFACE:-}"
 MWCTL_BIN="${C2000MAX_WIFI_PERF_MWCTL:-/usr/sbin/mwctl}"
@@ -59,19 +60,23 @@ runtime_info()
 	# Some mt_wifi7 builds return lpinfo on stdout, while the C2000MAX driver
 	# emits it exclusively through printk.  Support both forms; otherwise the
 	# UI reports a failed switch even though the private command took effect.
-	info="$(run_mwctl "$ifname" show lpinfo 2>/dev/null || true)"
+	info="$(run_mwctl "$ifname" show lpinfo 2>/dev/null)" || return 1
 	if [ -n "$info" ]; then
 		printf '%s\n' "$info"
 		return 0
 	fi
 	dmesg 2>/dev/null | tail -n 120 | awk '
-		/L1ss:[[:space:]]*[01]([[:space:]]|$)/ { l1ss = $0 }
+		/L1ss:[[:space:]]*[01]([[:space:]]|$)/ { l1ss = $0; profile = last = tpo = pst = "" }
 		/Profile LPOption:/ { profile = $0 }
 		/Last LPOption:/ { last = $0 }
+		/TpoEn:/ { tpo = $0 }
+		/PST:/ { pst = $0 }
 		END {
 			if (l1ss != "") print l1ss
 			if (profile != "") print profile
 			if (last != "") print last
+			if (tpo != "") print tpo
+			if (pst != "") print pst
 		}'
 }
 
@@ -85,12 +90,16 @@ runtime_matches()
 	printf '%s\n' "$info" |
 		grep -Eq "L1ss:[[:space:]]*${C2000_PERF_PCI}([[:space:]]|$)" || return 1
 	printf '%s\n' "$info" |
+		grep -Eq "TpoEn:[[:space:]]*${C2000_PERF_LP_VALUE}([[:space:]]|$)" || return 1
+	printf '%s\n' "$info" |
+		grep -Eq "PST:[[:space:]]*${C2000_PERF_LP_VALUE}([[:space:]]|$)" || return 1
+	printf '%s\n' "$info" |
 		grep -Eq "Last LPOption:[[:space:]]*\\(${C2000_PERF_LP_SELECT},${C2000_PERF_LP_VALUE}," || return 1
 }
 
 write_profile()
 {
-	local mode="$1" tmp
+	local mode="$1" tmp band
 	mode_values "$mode" || return 1
 	[ -f "$PROFILE_PATH" ] || {
 		echo "缺少 MT7993 卡级配置：$PROFILE_PATH" >&2
@@ -101,6 +110,7 @@ write_profile()
 	if ! sed \
 		-e "s/^PciL1ss=.*/PciL1ss=${C2000_PERF_PCI}/" \
 		-e "s/^LpOption=.*/LpOption=${C2000_PERF_LP}/" \
+		-e "s/^TpoEn=.*/TpoEn=${C2000_PERF_LP_VALUE}/" \
 		"$PROFILE_PATH" > "$tmp"; then
 		rm -f "$tmp"
 		return 1
@@ -108,8 +118,20 @@ write_profile()
 
 	grep -q '^PciL1ss=' "$tmp" || printf 'PciL1ss=%s\n' "$C2000_PERF_PCI" >> "$tmp"
 	grep -q '^LpOption=' "$tmp" || printf 'LpOption=%s\n' "$C2000_PERF_LP" >> "$tmp"
+	grep -q '^TpoEn=' "$tmp" || printf 'TpoEn=%s\n' "$C2000_PERF_LP_VALUE" >> "$tmp"
 	chmod --reference="$PROFILE_PATH" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
-	mv -f "$tmp" "$PROFILE_PATH"
+	if cmp -s "$tmp" "$PROFILE_PATH"; then rm -f "$tmp"; else mv -f "$tmp" "$PROFILE_PATH" || return 1; fi
+
+	# PST is an independent per-band setting. Disabling PCIe L1SS and the
+	# NIC LP features alone left PST/TPO enabled in the previous performance mode.
+	for band in "$BAND_PROFILE_DIR/mt7993.b0.dat" "$BAND_PROFILE_DIR/mt7993.b1.dat"; do
+		[ -f "$band" ] || continue
+		tmp="${band}.c2000max.$$"
+		sed "s/^LpPst=.*/LpPst=${C2000_PERF_LP_VALUE}/" "$band" > "$tmp" || { rm -f "$tmp"; return 1; }
+		grep -q '^LpPst=' "$tmp" || printf 'LpPst=%s\n' "$C2000_PERF_LP_VALUE" >> "$tmp"
+		chmod --reference="$band" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+		if cmp -s "$tmp" "$band"; then rm -f "$tmp"; else mv -f "$tmp" "$band" || return 1; fi
+	done
 }
 
 write_config()
@@ -145,6 +167,10 @@ apply_runtime()
 		# transition was already accepted.  Always verify the driver's actual
 		# state instead of treating the command return code as authoritative.
 		run_mwctl "$ifname" set "PciL1ss=${C2000_PERF_PCI}" >/dev/null 2>&1 || true
+		# The driver's documented band 255 selector applies PST to all bands;
+		# the TPO and LP commands are card-wide. Normal mode restores defaults.
+		run_mwctl "$ifname" set "muruLowPwr=255-0-${C2000_PERF_LP_VALUE}" >/dev/null 2>&1 || true
+		run_mwctl "$ifname" set "TptOption=0:${C2000_PERF_LP_VALUE}" >/dev/null 2>&1 || true
 		run_mwctl "$ifname" set "LpOption=${C2000_PERF_LP}" >/dev/null 2>&1 || true
 		sleep 1
 		runtime_matches "$mode" "$ifname" && return 0

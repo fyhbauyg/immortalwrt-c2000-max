@@ -586,6 +586,7 @@ start_service()
 	# transactions already reconcile EQoS while holding their ordered locks.
 	if [ "${C2000MAX_ACCEL_LOCKS_HELD:-0}" != 1 ] &&
 	   [ "${C2000MAX_DAED_HYBRID:-0}" != 1 ] &&
+	   ! { command -v c2000_sqm_enabled >/dev/null 2>&1 && c2000_sqm_enabled; } &&
 	   [ -d /sys/class/net/br-lan ] && [ -x /etc/init.d/eqos ]; then
 		/etc/init.d/eqos reload
 	fi
@@ -605,5 +606,5 @@ service_triggers()
 	# HNAT topology. Watching its UCI file caused a parallel HNAT rebuild and
 	# EQoS apply on every Save, which could turn qos_toggle back off after the
 	# limiter had just enabled it.
-	procd_add_reload_trigger turboacc c2000max_traffic
+	procd_add_reload_trigger turboacc c2000max_traffic sqm
 }

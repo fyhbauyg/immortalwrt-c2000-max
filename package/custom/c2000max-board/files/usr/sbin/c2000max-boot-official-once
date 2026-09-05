@@ -1,26 +1,7 @@
 #!/bin/sh
-
-# Arm one boot into the untouched SPI-NOR factory firmware without changing
-# the persistent boot source up front.  This board's exact 2025-05-21 U-Boot
-# binary does not contain CONFIG_USE_PREBOOT, and MediaTek's mtkautoboot
-# recreates every bootmenu_N variable.  It does contain eight compiled menu
-# entries followed by the common U-Boot-console entry (index 8).  Selecting
-# that exit entry makes mtkautoboot return to the normal bootcmd path.  A
-# guarded, one-shot bootcmd can therefore restore the TF defaults in flash,
-# switch to factory only in U-Boot RAM, and call the vendor mtkboardboot.
-
-ENV_LABEL='u-boot-env'
-ENV_SIZE=65536
-SOURCE_VAR='boot_from_sd'
-BOOTCMD_VAR='bootcmd'
-BOOTMENU_DEFAULT_VAR='bootmenu_default'
-BOOTMENU_DELAY_VAR='bootmenu_delay'
-MENU_EXIT_INDEX='8'
-ONE_SHOT_BOOTCMD='setenv bootcmd; setenv bootmenu_default; setenv bootmenu_delay; setenv boot_from_sd 1; if saveenv; then setenv boot_from_sd 0; else setenv boot_from_sd 1; fi; mtkboardboot'
-OBSOLETE_PREBOOT_VAR='preboot'
-OBSOLETE_PREBOOT_VALUE='setenv preboot; setenv boot_from_sd 1; saveenv; setenv boot_from_sd 0'
-LEGACY_MENU_VAR='bootmenu_0'
-LEGACY_MENU_VALUE='Startup system (one-time factory)=setenv boot_from_sd 1; setenv bootmenu_0; saveenv; setenv boot_from_sd 0; mtkboardboot'
+# The old one-shot scheme wrote the OEM JFFS2 overlay and SPI boot environment.
+# V36.5 provides diagnostics only. All exposed SPI partitions are read-only in
+# the DT as a second layer; there is intentionally no software opt-out here.
 
 json_result() {
 	local ready="$1" armed="$2" message="$3"
@@ -32,165 +13,17 @@ json_result() {
 	json_dump
 }
 
-find_env_mtd() {
-	local name rest hexsize size found= count=0
-	while IFS=: read -r name rest; do
-		case "$rest" in
-			*\"$ENV_LABEL\"*) ;;
-			*) continue ;;
-		esac
-		hexsize="${rest# }"
-		hexsize="${hexsize%% *}"
-		size=$((0x$hexsize))
-		[ "$size" -eq "$ENV_SIZE" ] || continue
-		found="/dev/$name"
-		count=$((count + 1))
-	done < /proc/mtd
-	[ "$count" -eq 1 ] || return 1
-	printf '%s\n' "$found"
-}
-
-make_env_config() {
-	ENV_MTD="$(find_env_mtd)" || return 1
-	[ -c "$ENV_MTD" ] || return 1
-	ENV_CONFIG="/tmp/c2000max-fw-env.$$"
-	(umask 077; printf '%s 0x0 0x10000 0x10000\n' "$ENV_MTD" > "$ENV_CONFIG") || return 1
-}
-
-cleanup() {
-	[ -z "$ENV_CONFIG" ] || rm -f "$ENV_CONFIG"
-	[ -z "$ENV_BATCH" ] || rm -f "$ENV_BATCH"
-}
-trap cleanup EXIT INT TERM
-
-env_get() {
-	fw_printenv -c "$ENV_CONFIG" -n "$1" 2>/dev/null
-}
-
-validate_environment() {
-	local source boot_system
-	fw_printenv -c "$ENV_CONFIG" >/dev/null 2>&1 || return 1
-	source="$(env_get "$SOURCE_VAR")" || return 1
-	[ "$source" = 1 ] || return 1
-	boot_system="$(env_get boot_system)" || return 1
-	case "$boot_system" in ''|*[!0-9]*) return 1 ;; esac
-	return 0
-}
-
-check_mutable_state() {
-	local bootcmd menu_default menu_delay preboot menu
-	bootcmd="$(env_get "$BOOTCMD_VAR" 2>/dev/null || true)"
-	menu_default="$(env_get "$BOOTMENU_DEFAULT_VAR" 2>/dev/null || true)"
-	menu_delay="$(env_get "$BOOTMENU_DELAY_VAR" 2>/dev/null || true)"
-	preboot="$(env_get "$OBSOLETE_PREBOOT_VAR" 2>/dev/null || true)"
-	menu="$(env_get "$LEGACY_MENU_VAR" 2>/dev/null || true)"
-	if [ -z "$bootcmd" ]; then
-		[ -z "$menu_default" ] && [ -z "$menu_delay" ] || return 1
-	else
-		[ "$bootcmd" = "$ONE_SHOT_BOOTCMD" ] &&
-			[ "$menu_default" = "$MENU_EXIT_INDEX" ] &&
-			[ "$menu_delay" = 0 ] || return 1
-	fi
-	case "$preboot" in ''|"$OBSOLETE_PREBOOT_VALUE") ;; *) return 1 ;; esac
-	case "$menu" in
-		''|"$LEGACY_MENU_VALUE") ;;
-		*) return 1 ;;
-	esac
-}
-
-prepare_environment() {
-	command -v fw_printenv >/dev/null 2>&1 || return 1
-	command -v fw_setenv >/dev/null 2>&1 || return 1
-	make_env_config || return 1
-	validate_environment || return 1
-	check_mutable_state
-}
-
 status_json() {
-	local bootcmd menu_default menu_delay preboot menu
-	if ! command -v fw_printenv >/dev/null 2>&1 ||
-	   ! command -v fw_setenv >/dev/null 2>&1; then
-		json_result 0 0 '缺少 U-Boot 环境工具，无法安全切换。'
-		return
-	fi
-	if ! make_env_config || ! validate_environment; then
-		json_result 0 0 '无法校验独立的 SPI-NOR U-Boot 环境，未进行任何写入。'
-		return
-	fi
-	if ! check_mutable_state; then
-		json_result 0 0 '检测到自定义 bootcmd、启动菜单或 preboot，拒绝覆盖现有 U-Boot 配置。'
-		return
-	fi
-	bootcmd="$(env_get "$BOOTCMD_VAR" 2>/dev/null || true)"
-	menu_default="$(env_get "$BOOTMENU_DEFAULT_VAR" 2>/dev/null || true)"
-	menu_delay="$(env_get "$BOOTMENU_DELAY_VAR" 2>/dev/null || true)"
-	preboot="$(env_get "$OBSOLETE_PREBOOT_VAR" 2>/dev/null || true)"
-	menu="$(env_get "$LEGACY_MENU_VAR" 2>/dev/null || true)"
-	if [ "$bootcmd" = "$ONE_SHOT_BOOTCMD" ] &&
-	   [ "$menu_default" = "$MENU_EXIT_INDEX" ] && [ "$menu_delay" = 0 ]; then
-		json_result 1 1 '已安排下次重启进入官方系统；后续重启自动回到 TF 卡系统。'
-	elif [ "$menu" = "$LEGACY_MENU_VALUE" ] ||
-	     [ "$preboot" = "$OBSOLETE_PREBOOT_VALUE" ]; then
-		json_result 1 0 '检测到无效的旧方案；下次操作将安全替换为 bootcmd 一次性启动。'
-	else
-		json_result 1 0 '可安全安排一次性启动官方系统。'
-	fi
+	json_result 0 0 '官方 Flash 写保护已启用；一次性切换已停用。请关机后拔出 TF 卡启动官方系统。'
 }
 
 arm_once() {
-	local bootcmd menu_default menu_delay preboot menu source verify_source
-	if ! prepare_environment; then
-		json_result 0 0 '无法校验 SPI-NOR U-Boot 环境或存在自定义启动命令，未进行写入。'
-		return 1
-	fi
-	bootcmd="$(env_get "$BOOTCMD_VAR" 2>/dev/null || true)"
-	menu_default="$(env_get "$BOOTMENU_DEFAULT_VAR" 2>/dev/null || true)"
-	menu_delay="$(env_get "$BOOTMENU_DELAY_VAR" 2>/dev/null || true)"
-	if [ "$bootcmd" = "$ONE_SHOT_BOOTCMD" ] &&
-	   [ "$menu_default" = "$MENU_EXIT_INDEX" ] && [ "$menu_delay" = 0 ]; then
-		json_result 1 1 '一次性官方系统启动已经安排。'
-		return 0
-	fi
-
-	source="$(env_get "$SOURCE_VAR")"
-	ENV_BATCH="/tmp/c2000max-fw-env-batch.$$"
-	(umask 077; {
-		printf '%s %s\n' "$BOOTCMD_VAR" "$ONE_SHOT_BOOTCMD"
-		printf '%s %s\n' "$BOOTMENU_DEFAULT_VAR" "$MENU_EXIT_INDEX"
-		printf '%s %s\n' "$BOOTMENU_DELAY_VAR" 0
-		# Remove only exact obsolete markers accepted by check_mutable_state.
-		printf '%s\n' "$OBSOLETE_PREBOOT_VAR"
-		printf '%s\n' "$LEGACY_MENU_VAR"
-	} > "$ENV_BATCH") || {
-		json_result 0 0 '无法创建环境更新事务。'
-		return 1
-	}
-	if ! fw_setenv -c "$ENV_CONFIG" -s "$ENV_BATCH" >/dev/null 2>&1; then
-		json_result 0 0 '写入 U-Boot 环境失败，未安排重启。'
-		return 1
-	fi
-	bootcmd="$(env_get "$BOOTCMD_VAR" 2>/dev/null || true)"
-	menu_default="$(env_get "$BOOTMENU_DEFAULT_VAR" 2>/dev/null || true)"
-	menu_delay="$(env_get "$BOOTMENU_DELAY_VAR" 2>/dev/null || true)"
-	preboot="$(env_get "$OBSOLETE_PREBOOT_VAR" 2>/dev/null || true)"
-	menu="$(env_get "$LEGACY_MENU_VAR" 2>/dev/null || true)"
-	verify_source="$(env_get "$SOURCE_VAR" 2>/dev/null || true)"
-	if [ "$bootcmd" != "$ONE_SHOT_BOOTCMD" ] ||
-	   [ "$menu_default" != "$MENU_EXIT_INDEX" ] || [ "$menu_delay" != 0 ] ||
-	   [ -n "$preboot" ] || [ -n "$menu" ] ||
-	   [ "$verify_source" != "$source" ]; then
-		json_result 0 0 'U-Boot 环境回读校验失败，请勿重启并检查 SPI-NOR。'
-		return 1
-	fi
-	json_result 1 1 '已安排：下次重启仅进入官方系统一次，后续自动恢复 TF 卡启动。'
+	json_result 0 0 '官方 Flash 写保护已启用，未修改启动环境或官方配置区，也未安排重启。'
+	return 1
 }
 
-ENV_MTD=
-ENV_CONFIG=
-ENV_BATCH=
-
-case "$1" in
-	status-json|status|'') status_json ;;
-	arm) arm_once ;;
-	*) echo "usage: $0 {status-json|arm}" >&2; exit 2 ;;
+case "${1:-status-json}" in
+	status-json|status) status_json ;;
+	arm|arm-reboot) arm_once ;;
+	*) echo "usage: $0 {status-json|status|arm|arm-reboot}" >&2; exit 2 ;;
 esac

@@ -1,0 +1,13 @@
+--- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
+@@ -63,8 +63,8 @@
+ 			'class': 'cbi-section',
+ 			'style': 'margin-top:2em'
+ 		}, [
+-			E('h3', {}, _('重启到官方系统（仅一次）')),
+-			E('p', {}, _('下一次重启从机身 SPI-NOR 中的官方系统启动；官方系统启动后会恢复 TF 卡启动标志，再次重启即可返回 ImmortalWrt。不会改写官方固件镜像，只会在官方配置区放置并自动删除恢复标记。')),
++			E('h3', {}, _('官方系统 Flash 保护')),
++			E('p', {}, _('本版本将 SPI-NOR 分区设为只读，不向官方系统或启动环境写入标记，因此停用一次性切换。需要进入官方系统时，请先关机再拔出 TF 卡；需要回到 ImmortalWrt 时，关机后插回 TF 卡。')),
+ 			E('p', {
+ 				'class': official.ready ? 'alert-message notice' : 'alert-message warning'
+ 			}, official.message || _('正在检查启动环境…')),

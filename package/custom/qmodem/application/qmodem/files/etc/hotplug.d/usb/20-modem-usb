@@ -1,13 +1,18 @@
 #!/bin/sh
 # Copyright (C) 2024 Tom <fjrcn@outlook.com>
 manual=$(uci -q get qmodem.main.block_auto_probe)
-[ "${manual}" -eq 1 ] && exit
-logger -t modem_hotplug "usb_event slot: ${DEVPATH} action: ${ACTION}"
+[ "${manual}" = 1 ] && exit 0
+# Only physical USB device events can identify a modem. Root hubs (usb1,
+# usb2) and interface bind events (1-1:1.0) are not probe candidates. Do this
+# before scheduling workers: otherwise each boot performs futile AT retries.
+[ "${DEVTYPE}" = usb_device ] || exit 0
+slot="${DEVPATH##*/}"
+case "$slot" in ''|usb*|*:*|*[!0-9.-]*) exit 0 ;; esac
+case "$slot" in [0-9]*-[0-9]*) ;; *) exit 0 ;; esac
 hotplug_add_delay=$(uci -q get qmodem.main.hotplug_add_delay || echo 8)
 [ -z "${DEVNUM}" ] && exit
 
 
-slot=$(basename "${DEVPATH}")
 logger -t modem_hotplug "usb_event run slot: ${slot} action: ${ACTION}"
 case "${ACTION}" in
     bind|\

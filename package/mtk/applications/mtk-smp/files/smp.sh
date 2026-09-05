@@ -67,8 +67,10 @@ MT7990_whnat()
 		ethif2=eth2
 		RPS_IF_LIST="$RPS_IF_LIST $ethif2"
 
-		CPU0_AFFINITY="$wifi1_irq $eth_rx0 $eth_rx2 $usb"
-		CPU1_AFFINITY="$wifi2_irq $eth_rx1 $eth_rx3 $eth_tx"
+		# MT7993 has one active WED IRQ (237), not a second per-band IRQ.
+		# Keep USB-NCM completion work off that CPU during Wi-Fi <-> 5G traffic.
+		CPU0_AFFINITY="$wifi1_irq $eth_rx0 $eth_rx2"
+		CPU1_AFFINITY="$wifi2_irq $eth_rx1 $eth_rx3 $eth_tx $usb"
 
 		CPU0_RPS="$ethif1 $ethif2 $wifi1 $wifi2 $wifi1_apcli0 $wifi2_apcli0"
 		CPU1_RPS="$ethif1 $ethif2 $wifi1 $wifi2 $wifi1_apcli0 $wifi2_apcli0"

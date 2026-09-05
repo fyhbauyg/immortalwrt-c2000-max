@@ -1,68 +1,14 @@
 #!/bin/bash
-
 set -euo pipefail
-
-ROOT="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
-TOP="$(CDPATH= cd "$ROOT/../../.." && pwd)"
-DTS="$TOP/target/linux/mediatek/dts/mt7987a-nradio-c2000-max.dts"
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
 HELPER="$ROOT/files/usr/sbin/c2000max-boot-official-once"
-RPC="$ROOT/files/usr/libexec/rpcd/c2000max"
-ACL="$ROOT/files/usr/share/rpcd/acl.d/c2000max.json"
-VIEW_PATCH="$TOP/scripts/c2000max/luci-system-official-boot.patch"
-VIEW="$TOP/feeds/luci/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js"
-WORKFLOW="$TOP/.github/workflows/c2000max-one-shot-build.yml"
-
-fail() { echo "FAIL: $*" >&2; exit 1; }
-
-sh -n "$HELPER" || fail 'official one-shot helper has invalid shell syntax'
-python3 -m json.tool "$ACL" >/dev/null || fail 'C2000MAX ACL JSON is invalid'
-
-sed -n '/partition@40000/,/};/p' "$DTS" | grep -Fq 'label = "u-boot-env"' &&
-sed -n '/partition@40000/,/};/p' "$DTS" | grep -Fq 'reg = <0x040000 0x010000>' ||
-	fail 'dedicated 64 KiB SPI-NOR U-Boot environment partition is missing'
-grep -Fq "ENV_LABEL='u-boot-env'" "$HELPER" &&
-grep -Fq 'fw_printenv -c "$ENV_CONFIG"' "$HELPER" &&
-grep -Fq 'fw_setenv -c "$ENV_CONFIG" -s "$ENV_BATCH"' "$HELPER" ||
-	fail 'helper does not use an isolated verified fw_env configuration'
-if grep -Fq '/etc/fw_env.config' "$HELPER"; then
-	fail 'helper can overwrite the SD-card SIM environment'
+sh -n "$HELPER"
+LEGACY="$ROOT/files/usr/lib/c2000max/official-return-tf"
+sh -n "$LEGACY"
+# A SPI read-only release must not contain a reachable or dormant write path.
+if grep -Eq '(^|[[:space:]])(fw_setenv|mount|mtd|dd|reboot|/sbin/reboot)[[:space:]]' "$HELPER" "$LEGACY"; then
+ echo 'FAIL: legacy flash writer remains in one-shot helper'; exit 1
 fi
-grep -Fq "BOOTCMD_VAR='bootcmd'" "$HELPER" &&
-grep -Fq "BOOTMENU_DEFAULT_VAR='bootmenu_default'" "$HELPER" &&
-grep -Fq "BOOTMENU_DELAY_VAR='bootmenu_delay'" "$HELPER" &&
-grep -Fq "MENU_EXIT_INDEX='8'" "$HELPER" &&
-grep -Fq "SOURCE_VAR='boot_from_sd'" "$HELPER" ||
-	fail 'helper does not select the verified MediaTek menu exit and bootcmd path'
-grep -Fq "ONE_SHOT_BOOTCMD='setenv bootcmd; setenv bootmenu_default; setenv bootmenu_delay; setenv boot_from_sd 1; if saveenv; then setenv boot_from_sd 0; else setenv boot_from_sd 1; fi; mtkboardboot'" "$HELPER" ||
-	fail 'one-shot bootcmd does not persist TF before its RAM-only factory boot'
-grep -Fq "OBSOLETE_PREBOOT_VALUE='setenv preboot; setenv boot_from_sd 1; saveenv; setenv boot_from_sd 0'" "$HELPER" ||
-	fail 'helper cannot safely remove the unsupported preboot scheme'
-if grep -Fq 'ONE_SHOT_VALUE=' "$HELPER"; then
-	fail 'obsolete environment bootmenu injection is still active'
-fi
-grep -Fq "LEGACY_MENU_VAR='bootmenu_0'" "$HELPER" &&
-grep -Fq "LEGACY_MENU_VALUE='Startup system (one-time factory)=" "$HELPER" ||
-	fail 'helper cannot identify the exact stale bootmenu marker from older builds'
-grep -Fq '检测到自定义 bootcmd、启动菜单或 preboot' "$HELPER" ||
-	fail 'helper can overwrite a user-defined bootcmd, preboot, or vendor boot menu'
-grep -Fq '[ "$source" = 1 ] || return 1' "$HELPER" ||
-	fail 'helper can arm while persistent TF boot is not selected'
-
-grep -Fq 'official_boot_status' "$RPC" && grep -Fq 'official_boot_once' "$RPC" ||
-	fail 'official boot RPC methods are missing'
-grep -Fq 'official_boot_once' "$ACL" || fail 'official boot RPC permission is missing'
-grep -Fq 'handleOfficialOnce' "$VIEW_PATCH" ||
-	fail 'durable LuCI reboot-page patch is missing the official boot button'
-grep -Fq 'luci-system-official-boot.patch' "$WORKFLOW" ||
-	fail 'build workflow does not apply the official boot LuCI patch'
-
-if [ -f "$VIEW" ]; then
-	grep -Fq 'handleOfficialOnce' "$VIEW" ||
-		fail 'applied LuCI reboot page is missing the official boot button'
-fi
-
-if command -v node >/dev/null 2>&1 && [ -f "$VIEW" ]; then
-	node --check "$VIEW" >/dev/null
-fi
-
-echo 'C2000MAX guarded MediaTek-menu-exit one-shot factory boot tests passed'
+if sh "$LEGACY"; then echo 'FAIL: legacy return script accepted'; exit 1; fi
+bash "$ROOT/tests/test_v365_safety.sh"
+echo 'Official boot is safely disabled in the read-only SPI release'

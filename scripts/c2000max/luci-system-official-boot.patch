@@ -1,7 +1,7 @@
 diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
 --- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
 +++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
-@@ -10,18 +10,37 @@
+@@ -10,18 +10,41 @@
  	expect: { result: 0 }
  });
  
@@ -32,6 +32,10 @@ diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/re
 +	render: function(data) {
 +		var changes = data[0] || {};
 +		var official = data[1] || {};
++		var officialButtonAttrs = {
++			'class': 'cbi-button cbi-button-negative important',
++			'click': ui.createHandlerFn(this, 'handleOfficialOnce')
++		};
  		var body = E([
  			E('h2', _('Reboot')),
  			E('p', {}, _('Reboots the operating system of your device'))
@@ -42,24 +46,24 @@ diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/re
  			body.appendChild(E('p', { 'class': 'alert-message warning' },
  				_('Warning: There are unsaved changes that will get lost on reboot!')));
  			break;
-@@ -33,30 +52,76 @@
+@@ -33,30 +56,72 @@
  			'click': ui.createHandlerFn(this, 'handleReboot')
  		}, _('Perform reboot')));
  
++		if (!official.ready || official.armed)
++			officialButtonAttrs.disabled = 'disabled';
++
 +		body.appendChild(E('div', {
 +			'class': 'cbi-section',
 +			'style': 'margin-top:2em'
 +		}, [
 +			E('h3', {}, _('重启到官方系统（仅一次）')),
-+			E('p', {}, _('下一次重启从机身 SPI-NOR 中的官方系统启动；官方系统再次重启后，会自动返回 TF 卡中的 ImmortalWrt。不会改写官方固件。')),
++			E('p', {}, _('下一次重启从机身 SPI-NOR 中的官方系统启动；官方系统启动后会恢复 TF 卡启动标志，再次重启即可返回 ImmortalWrt。不会改写官方固件镜像，只会在官方配置区放置并自动删除恢复标记。')),
 +			E('p', {
 +				'class': official.ready ? 'alert-message notice' : 'alert-message warning'
 +			}, official.message || _('正在检查启动环境…')),
-+			E('button', {
-+				'class': 'cbi-button cbi-button-negative important',
-+				'disabled': !official.ready || official.armed,
-+				'click': ui.createHandlerFn(this, 'handleOfficialOnce')
-+			}, official.armed ? _('已安排一次性启动') : _('重启到官方系统一次'))
++			E('button', officialButtonAttrs,
++				official.armed ? _('已安排一次性启动') : _('重启到官方系统一次'))
 +		]));
 +
  		return body;
@@ -121,11 +125,7 @@ diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/re
 +						return callOfficialOnce().then(L.bind(function(result) {
 +							if (!result || !result.ready || !result.armed)
 +								throw new Error((result && result.message) || _('无法安排官方系统启动。'));
-+							return callReboot().then(L.bind(function(res) {
-+								if (res != 0)
-+									throw new Error(_('The reboot command failed with code %d').format(res));
-+								this.showRebootWait();
-+							}, this));
++							this.showRebootWait();
 +						}, this)).catch(function(e) {
 +							ui.hideModal();
 +							L.ui.addNotification(null, E('p', e.message));

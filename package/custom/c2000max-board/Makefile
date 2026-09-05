@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
-PKG_VERSION:=2.36.10
-PKG_RELEASE:=9
+PKG_VERSION:=2.36.5
+PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -58,6 +58,7 @@ define Package/c2000max-board/install
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
 	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/98-c2000max-uplink $(1)/etc/hotplug.d/iface/98-c2000max-uplink
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-c2000max-defaults $(1)/etc/uci-defaults/99-c2000max-defaults
+	$(INSTALL_BIN) ./files/etc/uci-defaults/98-c2000max-passwordless $(1)/etc/uci-defaults/98-c2000max-passwordless
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-y-c2000max-v3601-services $(1)/etc/uci-defaults/99-y-c2000max-v3601-services
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-z-c2000max-feed-fix $(1)/etc/uci-defaults/99-z-c2000max-feed-fix
 	$(INSTALL_BIN) ./files/lib/preinit/79_c2000max_grow_tf $(1)/lib/preinit/79_c2000max_grow_tf
@@ -84,12 +85,16 @@ define Package/c2000max-board/install
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-mlo-interlock $(1)/usr/sbin/c2000max-mlo-interlock
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-owe-transition $(1)/usr/sbin/c2000max-owe-transition
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-wifi-performance $(1)/usr/sbin/c2000max-wifi-performance
+	$(INSTALL_BIN) ./files/usr/sbin/c2000max-sqm-prepare $(1)/usr/sbin/c2000max-sqm-prepare
+	$(INSTALL_BIN) ./files/usr/sbin/c2000max-netcheck $(1)/usr/sbin/c2000max-netcheck
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-ip-family $(1)/usr/sbin/c2000max-ip-family
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/c2000max-stun $(1)/usr/bin/c2000max-stun
 	$(INSTALL_DIR) $(1)/usr/lib/c2000max
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/port-role.sh $(1)/usr/lib/c2000max/port-role.sh
+	$(INSTALL_DATA) ./files/usr/lib/c2000max/qos-compat.sh $(1)/usr/lib/c2000max/qos-compat.sh
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/uplink-mode.sh $(1)/usr/lib/c2000max/uplink-mode.sh
+	$(INSTALL_BIN) ./files/usr/lib/c2000max/official-return-tf $(1)/usr/lib/c2000max/official-return-tf
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
 	$(INSTALL_BIN) ./files/usr/libexec/rpcd/c2000max $(1)/usr/libexec/rpcd/c2000max
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/c2000max

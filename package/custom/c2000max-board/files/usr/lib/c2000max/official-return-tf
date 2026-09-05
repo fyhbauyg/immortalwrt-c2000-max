@@ -1,0 +1,5 @@
+#!/bin/sh
+# Legacy recovery entry retained only to fail closed for old callers.
+# V36.5 must not write the OEM overlay or the SPI boot environment.
+echo '官方 Flash 写保护：旧返回 TF 恢复脚本已停用，未写入任何分区。' >&2
+exit 1

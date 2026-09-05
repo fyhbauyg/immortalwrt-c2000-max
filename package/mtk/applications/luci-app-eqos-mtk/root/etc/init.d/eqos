@@ -347,6 +347,14 @@ parse_device() {
 }
 
 eqos_start_service_locked() {
+	if [ "$(board_name)" = nradio,c2000-max ] &&
+	   [ -r /usr/lib/c2000max/qos-compat.sh ]; then
+		. /usr/lib/c2000max/qos-compat.sh
+		if c2000_sqm_enabled; then
+			echo 'SQM 低延迟队列已启用，设备限速暂停以避免队列冲突；关闭 SQM 后可恢复。' >&2
+			return 1
+		fi
+	fi
 	config_load eqos
 
 	local enabled effective hook

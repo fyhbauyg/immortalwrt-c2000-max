@@ -1,0 +1,36 @@
+--- a/mt_wifi/common/fsm/ap_mgmt_assoc.c
++++ b/mt_wifi/common/fsm/ap_mgmt_assoc.c
+@@ -1570,6 +1570,10 @@
+ 			/*parse EXTENSION EID*/
+ 			UCHAR *extension_id = (UCHAR *)eid_ptr + 2;
+ 
++			/* An extension IE must contain its extension ID. */
++			if (eid_ptr->Len < 1)
++				return FALSE;
++
+ #ifdef DOT11_EHT_BE
+ 			if (eht_get_ies((UINT8 *)eid_ptr, &ie_lists->cmm_ies, &frag_info) < 0)
+ 				return FALSE;
+@@ -1579,15 +1583,16 @@
+ 			case EID_EXT_ECDH:
+ #if defined(CONFIG_OWE_SUPPORT) || defined(HOSTAPD_OWE_SUPPORT)
+ 			{
+-				if (eid_ptr->Len > (sizeof(ie_lists->ecdh_ie) - 2)) {
++				if (eid_ptr->Len < 3 ||
++				    eid_ptr->Len > (sizeof(ie_lists->ecdh_ie) - 2)) {
+ 					MTWF_DBG(pAd, DBG_CAT_MLME, CATMLME_ASSOC, DBG_LVL_ERROR,
+-						"IE_WLAN_EXTENSION: parsing HE related ies(%d) unexpected error\n", *extension_id);
+-					break;
++						"IE_WLAN_EXTENSION: invalid OWE ECDH length %u\n", eid_ptr->Len);
++					return FALSE;
+ 				}
+ 				os_zero_mem(&ie_lists->ecdh_ie, sizeof(ie_lists->ecdh_ie));
+-				ie_lists->ecdh_ie.ext_ie_id = IE_WLAN_EXTENSION;
+-				ie_lists->ecdh_ie.length = eid_ptr->Len;
+-				NdisMoveMemory(&ie_lists->ecdh_ie.ext_id_ecdh, eid_ptr->Octet, eid_ptr->Len);
++				/* Copy the complete bounded IE, not across a one-byte
++				 * scalar member. Keep FORTIFY enabled for real overflows. */
++				NdisMoveMemory(&ie_lists->ecdh_ie, eid_ptr, eid_ptr->Len + 2);
+ 			}
+ #endif /*CONFIG_OWE_SUPPORT*/
+ 				break;

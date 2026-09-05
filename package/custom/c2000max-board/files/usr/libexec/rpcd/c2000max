@@ -106,7 +106,7 @@ EOF
 				exec /usr/sbin/c2000max-boot-official-once status-json
 				;;
 			official_boot_once)
-				exec /usr/sbin/c2000max-boot-official-once arm
+				exec /usr/sbin/c2000max-boot-official-once arm-reboot
 				;;
 			port_status)
 				exec /usr/sbin/c2000max-port-role status

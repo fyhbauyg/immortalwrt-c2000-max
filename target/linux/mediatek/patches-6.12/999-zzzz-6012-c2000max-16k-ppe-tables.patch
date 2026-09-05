@@ -1,0 +1,17 @@
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat.c
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat.c
+@@ -1458,6 +1458,14 @@
+ 	if (ppe_id == 0) {
+ 		entry_count = DEF_ETRY_NUM;
+ 		etry_num_cfg = DEF_ETRY_NUM_CFG;
++		/* 512 MiB C2000MAX: halve the oversized 32K tables per PPE.
++		 * Reuse the existing common-size/fallback path so DMA descriptors,
++		 * MIB accounting and both PPEs always agree on the same range. */
++		if (of_machine_is_compatible("nradio,c2000-max") &&
++		    entry_count > 16384) {
++			entry_count = 16384;
++			etry_num_cfg = TABLE_16K;
++		}
+ 	} else {
+ 		entry_count = h->foe_etry_num;
+ 		etry_num_cfg = h->etry_num_cfg;

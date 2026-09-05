@@ -1,0 +1,22 @@
+diff --git a/modules/luci-compat/luasrc/model/network.lua b/modules/luci-compat/luasrc/model/network.lua
+--- a/modules/luci-compat/luasrc/model/network.lua
++++ b/modules/luci-compat/luasrc/model/network.lua
+@@ -755,9 +755,14 @@ function get_interfaces(self)
+ 	local wfs = { }
+ 	_uci:foreach("wireless", "wifi-iface",
+ 		function(s)
+ 			if s.device then
+-				num[s.device] = num[s.device] and num[s.device] + 1 or 1
+-				local i = "%s.network%d" %{ s.device, num[s.device] }
+-				wfs[i] = interface(i)
++				local devices = type(s.device) == "table" and s.device or { s.device }
++				for _, device in ipairs(devices) do
++					if type(device) == "string" and #device > 0 then
++						num[device] = num[device] and num[device] + 1 or 1
++						local i = "%s.network%d" %{ device, num[device] }
++						wfs[i] = interface(i)
++					end
++				end
+ 			end
+ 		end)
+ 

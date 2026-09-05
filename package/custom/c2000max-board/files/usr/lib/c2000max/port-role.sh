@@ -10,6 +10,8 @@ C2000_DEGRADED="${C2000_DEGRADED:-/var/run/c2000max-port-role.degraded}"
 C2000_SYS_CLASS_NET="${C2000_SYS_CLASS_NET:-/sys/class/net}"
 C2000_HNAT_DIR="${C2000_HNAT_DIR:-/sys/kernel/debug/hnat}"
 C2000_HNAT_TOPOLOGY="${C2000_HNAT_TOPOLOGY:-$C2000_HNAT_DIR/hnat_topology}"
+C2000_QOS_COMPAT="${C2000_QOS_COMPAT:-/usr/lib/c2000max/qos-compat.sh}"
+[ ! -r "$C2000_QOS_COMPAT" ] || . "$C2000_QOS_COMPAT"
 
 c2000_list_has()
 {
@@ -157,6 +159,13 @@ c2000_actual_role()
 c2000_effective_fastpath()
 {
 	local role="$1" requested="${2:-disabled}"
+
+	# SQM must see every packet. Retain the saved acceleration preference,
+	# but suspend both PPE and software flowtables until SQM is disabled.
+	if command -v c2000_sqm_enabled >/dev/null 2>&1 && c2000_sqm_enabled; then
+		printf '%s\n' disabled
+		return 0
+	fi
 
 	case "$role" in
 		lan)

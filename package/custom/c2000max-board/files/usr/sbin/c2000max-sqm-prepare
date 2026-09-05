@@ -1,0 +1,27 @@
+#!/bin/sh
+
+# Called before start-sqm, including iface hotplug paths. No flash/boot access.
+[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = nradio,c2000-max ] || exit 0
+. /usr/lib/c2000max/qos-compat.sh
+if [ "${1:-prepare}" = restore ]; then
+	# Called by SQM only after its stop/cleanup loop. An asynchronous UCI
+	# reload must not reinstall EQoS before SQM removes the old qdisc.
+	c2000_sqm_enabled && exit 0
+	exec /etc/init.d/c2000max-hnat reload
+fi
+c2000_sqm_enabled || exit 0
+
+# Leave user EQoS settings intact, but give the selected SQM queue sole
+# ownership. Teardown is before SQM installs its qdisc, never after it.
+if [ -s /var/run/eqos/backend ]; then
+	/etc/init.d/eqos stop || exit 1
+fi
+/etc/init.d/c2000max-hnat reload || {
+	logger -t c2000max-sqm '无法安全停用加速，拒绝启动 SQM；请检查网络加速状态。'
+	exit 1
+}
+if [ -e /sys/kernel/debug/hnat/hook_toggle ] &&
+   [ "$(cat /sys/kernel/debug/hnat/hook_toggle)" != disabled ]; then
+	exit 1
+fi
+exit 0

@@ -1,0 +1,15 @@
+--- a/applications/luci-app-sqm/htdocs/luci-static/resources/view/network/sqm.js
++++ b/applications/luci-app-sqm/htdocs/luci-static/resources/view/network/sqm.js
+@@ -67,6 +67,12 @@
+ 				  " active queue length management (AQM) " +
+ 				  " and prioritisation on one " +
+ 				  "network interface.");
++		if (uci.get('sqm', 'nr_game'))
++			m.description += '<p>5G NR 游戏预设使用 eth2，默认关闭。请先测量繁忙时段可稳定达到的速率，' +
++				'将下载/上传分别填为该速率的约 80%～90%（单位 kbit/s），再启用；0 表示该方向不整形。' +
++				'启用任意 SQM 队列后将暂停硬件/软件流量加速和 C2000MAX 设备限速，关闭 SQM 后恢复原加速选择。' +
++				'请勿同时叠加其它插件的整形队列。5G 带宽波动时需适当降低整形速率；此功能改善满载排队延迟，' +
++				'不能消除基站拥塞或保证游戏 ping，最高吞吐也会受到 CPU 限制。</p>';
+ 
+ 		s = m.section(form.TypedSection, 'queue', _('Queues'));
+ 		s.tab("tab_basic", _("Basic Settings"));

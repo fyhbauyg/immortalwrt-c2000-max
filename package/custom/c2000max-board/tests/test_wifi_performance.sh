@@ -26,7 +26,11 @@ declare -a MWCTL_CALLS=()
 RUNTIME_PCI=1
 RUNTIME_LP_SELECT=2
 RUNTIME_LP_VALUE=1
+RUNTIME_TPO=1
+RUNTIME_PST=1
 FAIL_MATCH=
+printf 'Default\nLpPst=1\n' > "$TMPDIR/mt7993.b0.dat"
+cp "$TMPDIR/mt7993.b0.dat" "$TMPDIR/mt7993.b1.dat"
 
 fail()
 {
@@ -74,6 +78,8 @@ run_mwctl()
 		[[ -z "$FAIL_MATCH" || "$command" != *"$FAIL_MATCH"* ]] || return 1
 		case "$parameter" in
 			PciL1ss=*) RUNTIME_PCI="${parameter#*=}" ;;
+			TptOption=0:*) RUNTIME_TPO="${parameter##*:}" ;;
+			muruLowPwr=255-0-*) RUNTIME_PST="${parameter##*-}" ;;
 			LpOption=*)
 				RUNTIME_LP_SELECT="${parameter#*=}"
 				RUNTIME_LP_VALUE="${RUNTIME_LP_SELECT#*:}"
@@ -85,6 +91,7 @@ run_mwctl()
 
 	if [[ "${2-}" == show && "${3-}" == lpinfo ]]; then
 		printf 'L1ss: %s\n' "$RUNTIME_PCI"
+		printf 'TpoEn: %s\nPST: %s\n' "$RUNTIME_TPO" "$RUNTIME_PST"
 		printf 'Profile LPOption: (%s:%s)\n' "$RUNTIME_LP_SELECT" "$RUNTIME_LP_VALUE"
 		printf 'Last LPOption: (%s,%s,0,0)\n' "$RUNTIME_LP_SELECT" "$RUNTIME_LP_VALUE"
 		return 0
@@ -97,6 +104,14 @@ set_mode 1
 [[ "$MODE" == 1 ]] || fail 'high-performance mode was not persisted'
 grep -qx 'PciL1ss=0' "$PROFILE" || fail 'L1SS was not disabled'
 grep -qx 'LpOption=2:0' "$PROFILE" || fail 'low-power features were not disabled'
+grep -qx 'TpoEn=0' "$PROFILE" || fail 'TPO was not disabled'
+for band in "$TMPDIR/mt7993.b0.dat" "$TMPDIR/mt7993.b1.dat"; do
+	grep -qx 'LpPst=0' "$band" || fail 'band PST was not disabled'
+done
+[[ "$RUNTIME_TPO:$RUNTIME_PST" == 0:0 ]] || fail 'runtime TPO/PST remain enabled'
+inode_before=$(stat -c %i "$PROFILE")
+write_profile 1
+[[ "$(stat -c %i "$PROFILE")" == "$inode_before" ]] || fail 'unchanged profile rewritten'
 [[ " ${MWCTL_CALLS[*]} " == *' ra0 set PciL1ss=0 '* ]] || fail 'runtime L1SS command missing'
 [[ " ${MWCTL_CALLS[*]} " == *' ra0 set LpOption=2:0 '* ]] || fail 'runtime LP command missing'
 grep -Fq '"$MWCTL_BIN" dev "$@"' "$SCRIPT" || fail 'mwctl scripting form does not identify the netdev explicitly'
@@ -106,6 +121,8 @@ set_mode 0
 [[ "$MODE" == 0 ]] || fail 'normal mode was not restored'
 grep -qx 'PciL1ss=1' "$PROFILE" || fail 'normal L1SS default was not restored'
 grep -qx 'LpOption=2:1' "$PROFILE" || fail 'normal LP default was not restored'
+[[ "$RUNTIME_TPO:$RUNTIME_PST" == 1:1 ]] || fail 'normal TPO/PST not restored'
+grep -qx 'LpPst=1' "$TMPDIR/mt7993.b1.dat" || fail 'band profile not restored'
 
 set_mode 1
 FAIL_MATCH='LpOption=2:1'
@@ -115,6 +132,9 @@ fi
 [[ "$MODE" == 1 ]] || fail 'failed switch did not roll UCI back'
 grep -qx 'PciL1ss=0' "$PROFILE" || fail 'failed switch did not roll the profile back'
 grep -qx 'LpOption=2:0' "$PROFILE" || fail 'failed switch did not roll LP profile back'
+FAIL_MATCH='muruLowPwr=255-0-1'
+if set_mode 0; then fail 'PST failure ignored'; fi
+[[ "$MODE:$RUNTIME_TPO:$RUNTIME_PST" == 1:0:0 ]] || fail 'PST rollback incomplete'
 
 grep -Fq 'START=17' "$INIT" || fail 'profile is not applied before network startup'
 grep -A2 "config wifi_performance 'wifi_performance'" "$DEFAULT_CONFIG" |

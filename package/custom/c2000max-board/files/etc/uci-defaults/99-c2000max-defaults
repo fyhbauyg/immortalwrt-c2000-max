@@ -18,8 +18,13 @@ fi
 ROLE_LIB=/usr/lib/c2000max/port-role.sh
 [ ! -r "$ROLE_LIB" ] || . "$ROLE_LIB"
 
-uci -q set network.lan.ipaddr='192.168.66.1'
-uci -q set network.lan.netmask='255.255.255.0'
+# Clean-install addressing is supplied by board.d/02_network. Never overwrite
+# an existing LAN address/mask (including list-form CIDRs) on sysupgrade.
+# This matters for installations that deliberately use 192.168.0.1.
+if [ -z "$(uci -q get network.lan.ipaddr)" ]; then
+	uci -q set network.lan.ipaddr='192.168.66.1'
+	uci -q set network.lan.netmask='255.255.255.0'
+fi
 uci -q set system.@system[0].hostname='C2000MAX'
 uci -q set system.@system[0].timezone='CST-8'
 uci -q set system.@system[0].zonename='Asia/Shanghai'
@@ -686,6 +691,23 @@ uci -q commit qmodem
 # Enforce the private-driver MLO/ordinary-BSS exclusion before the first
 # wireless start.  This changes only disabled state and never SSID/security.
 /usr/sbin/c2000max-mlo-interlock sync >/dev/null 2>&1 || true
+
+# Optional 5G gaming/bufferbloat profile. Do not guess a cellular capacity or
+# cap throughput without a measurement: the user enters stable DL/UL rates in
+# the existing SQM page. Both zero means shaping is deliberately unconfigured.
+if [ -z "$(uci -q get sqm.nr_game)" ]; then
+	uci -q set sqm.nr_game=queue
+	uci -q set sqm.nr_game.enabled='0'
+	uci -q set sqm.nr_game.interface='eth2'
+	uci -q set sqm.nr_game.download='0'
+	uci -q set sqm.nr_game.upload='0'
+	uci -q set sqm.nr_game.qdisc='cake'
+	uci -q set sqm.nr_game.script='piece_of_cake.qos'
+	uci -q set sqm.nr_game.linklayer='ethernet'
+	uci -q set sqm.nr_game.overhead='44'
+	uci -q set sqm.nr_game.use_mq='0'
+	uci -q commit sqm
+fi
 
 uci -q commit network
 uci -q commit system

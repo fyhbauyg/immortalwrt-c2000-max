@@ -148,6 +148,7 @@ mediatek_setup_interfaces()
 		;;
 	nradio,c2000-max)
 		ucidef_set_interface_lan "eth1"
+		ucidef_set_interface "lan" ipaddr "192.168.66.1" netmask "255.255.255.0"
 		;;
 	viettel,32x6|\
 	wirelesstag,zx7981pd-ubootmod)

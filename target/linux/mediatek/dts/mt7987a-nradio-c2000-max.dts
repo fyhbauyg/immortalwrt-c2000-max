@@ -383,12 +383,11 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			/* Dedicated U-Boot environment.  It is writable only so the
-			 * running TF-card system can arm a verified one-shot boot into
-			 * the untouched factory firmware. */
+			/* Diagnostics only. TF-card firmware must not write SPI-NOR. */
 			partition@40000 {
 				label = "u-boot-env";
 				reg = <0x040000 0x010000>;
+				read-only;
 			};
 
 			partition@50000 {
@@ -400,6 +399,21 @@
 			partition@150000 {
 				label = "bdinfo";
 				reg = <0x150000 0x010000>;
+				read-only;
+			};
+
+			partition@1d0000 {
+				label = "FIP";
+				reg = <0x1d0000 0x100000>;
+				read-only;
+			};
+
+			/* Expose only the factory system's fixed JFFS2 configuration range.
+			 * The deliberately unique label prevents fstools from selecting it
+			 * as the TF-card system's rootfs_data overlay. */
+			partition@1e40000 {
+				label = "factory-overlay";
+				reg = <0x1e40000 0x1c0000>;
 				read-only;
 			};
 		};

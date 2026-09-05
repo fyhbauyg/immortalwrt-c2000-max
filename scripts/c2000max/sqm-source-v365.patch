@@ -1,0 +1,28 @@
+--- a/src/run-openwrt.sh
++++ b/src/run-openwrt.sh
+@@ -47,6 +47,15 @@
+     [ "$(config_get "$section" enabled)" -eq 1 ] || return 0
+     [ -f "${SQM_STATE_DIR}/${IFACE}.state" ] && return
+ 
++    # Board helper suspends offload/EQoS before any qdisc is installed. This
++    # common path also covers direct and iface-hotplug starts, not only init.
++    if [ -x /usr/sbin/c2000max-sqm-prepare ]; then
++        /usr/sbin/c2000max-sqm-prepare || {
++            sqm_error "Cannot safely prepare C2000MAX acceleration for SQM"
++            return 1
++        }
++    fi
++
+     export UPLINK=$(config_get "$section" upload)
+     export DOWNLINK=$(config_get "$section" download)
+     export LLAM=$(config_get "$section" linklayer_adaptation_mechanism)
+@@ -135,3 +144,9 @@
+     config_load sqm
+     config_foreach start_sqm_section
+ fi
++
++# Only restore board acceleration after every selected queue has stopped.
++# The helper also checks other active/configured queues before restoring.
++if [ "$ACTION" = stop ] && [ -x /usr/sbin/c2000max-sqm-prepare ]; then
++    /usr/sbin/c2000max-sqm-prepare restore || exit 1
++fi
