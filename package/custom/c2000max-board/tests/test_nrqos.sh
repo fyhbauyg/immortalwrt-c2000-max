@@ -23,7 +23,7 @@ reset_case() {
 	printf 'eth2\n' > "$TMP/default"
 	printf '%s\n' 'enabled=1' 'interface=eth2' 'upload_kbit=130000' 'autorate=0' 'min_upload_kbit=0' 'max_upload_kbit=0' 'interval=2' 'delay_target_ms=15' 'ping_hosts=223.5.5.5 119.29.29.29' > "$TMP/config"
 	rm -f "$TMP/tc-fail" "$TMP/tc-fail-change" "$TMP/eqos-on" "$TMP/sqm-on" "$TMP/eqos-backend" "$TMP/state/error"
-	rm -f "$TMP/fail-match" "$TMP/ingress" "$TMP/filters" "$TMP/foreign-filters" "$TMP/same-pref-filters" "$TMP/down-qdisc" "$TMP/filter-clock" "$TMP/filter-read-fail"
+	rm -f "$TMP/fail-match" "$TMP/ingress" "$TMP/filters" "$TMP/foreign-filters" "$TMP/same-pref-filters" "$TMP/down-qdisc" "$TMP/filter-clock" "$TMP/filter-read-fail" "$TMP/keep-pref"
 	if [ -d "$TMP/sys/class/net/ifb-nrqos" ]; then
 		rm -f "$TMP/sys/class/net/ifb-nrqos/ifalias" "$TMP/sys/class/net/ifb-nrqos/ifindex"
 		rmdir "$TMP/sys/class/net/ifb-nrqos"
@@ -220,6 +220,19 @@ assert test ! -e "$TMP/sys/class/net/ifb-nrqos"
 assert test ! -e "$TMP/ingress"
 assert test ! -e "$TMP/filters"
 assert grep -q '^qdisc fq_codel 0:' "$TMP/qdisc"
+
+# A pref-scoped tc query omits pref 365 on the target, but other versions
+# retain it. Both formats must work without relaxing unscoped ownership.
+reset_case
+duplex_config
+touch "$TMP/keep-pref"
+sh "$BIN" start
+assert sh -c 'sh "$1" status | jq -e ".download_active == true" >/dev/null' sh "$BIN"
+rm -f "$TMP/keep-pref"
+assert sh -c 'sh "$1" status | jq -e ".download_active == true" >/dev/null' sh "$BIN"
+sh "$BIN" stop
+assert test ! -e "$TMP/sys/class/net/ifb-nrqos"
+assert test ! -e "$TMP/ingress"
 
 # Installed/used/firstused ages and packet counters change between tc
 # snapshots, including during setup. They must not imply ownership loss.

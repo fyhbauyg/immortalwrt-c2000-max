@@ -163,7 +163,10 @@ filter_is_ours() {
 	# -s on this target. Match only static headers and action semantics, not
 	# whole output snapshots. A pref bucket may contain multiple protocols,
 	# chains or handles; none of those may be deleted along with our rule.
-	awk '
+	# A preference-scoped tc query omits that preference from each header.
+	# Only allow this omission when the caller actually selected our pref;
+	# unscoped dumps must still identify it explicitly.
+	awk -v selected_pref="${1:-}" '
 	{ sub(/\r$/, "") }
 	$1 == "filter" {
 		protocol=0; pref=0; kind=0; chain=0; handle=0
@@ -177,7 +180,7 @@ filter_is_ours() {
 			else if (k=="handle") { v=$(++i); if (v!="1" && v!="0x1") bad=1; handle++ }
 			else bad=1
 		}
-		if (protocol!=1 || pref!=1 || kind!=1 || chain!=1 || handle>1) bad=1
+		if (protocol!=1 || (pref!=1 && !(pref==0 && selected_pref=="365")) || kind!=1 || chain!=1 || handle>1) bad=1
 		if (handle) rules++; else summaries++
 		next
 	}
@@ -194,7 +197,7 @@ down_filter_owned() {
 	local filters
 	case "$(ingress_line)" in 'qdisc ingress ffff: '*) :;; *) return 1;; esac
 	filters=$(tc filter show dev "$IFACE" parent "$INGRESS_HANDLE" pref "$FILTER_PREF" 2>/dev/null) || return 1
-	printf '%s\n' "$filters" | filter_is_ours
+	printf '%s\n' "$filters" | filter_is_ours "$FILTER_PREF"
 }
 down_owned() {
 	down_link_owned && down_filter_owned || return 1

@@ -21,12 +21,19 @@ tc)
 			exit 0;;
 		*' filter show '*)
 			[ ! -e "$MOCK/filter-read-fail" ] || exit 1
-			cat "$MOCK/filters" 2>/dev/null || :
+			filter_file() {
+				if [ "$scoped" = 1 ] && [ ! -e "$MOCK/keep-pref" ]; then
+					# Real tc suppresses fields already selected by the command.
+					sed 's/ parent ffff: / /g; s/ pref 365 / /g' "$1" 2>/dev/null || :
+				else cat "$1" 2>/dev/null || :; fi
+			}
+			scoped=0; case " $* " in *' pref 365 '*) scoped=1;; esac
+			filter_file "$MOCK/filters"
 			if [ -f "$MOCK/filter-clock" ] && [ -s "$MOCK/filters" ]; then
 				clock=$(cat "$MOCK/filter-clock"); clock=$((clock+1)); printf '%s\n' "$clock" > "$MOCK/filter-clock"
 				printf '\tindex 1 ref 1 bind 1 installed %s sec used %s sec firstused %s sec\n\tAction statistics:\n\tSent %s bytes %s pkt (dropped 0, overlimits 0 requeues 0)\n' "$clock" "$clock" "$clock" "$((clock*1400))" "$clock"
 			fi
-			cat "$MOCK/same-pref-filters" 2>/dev/null || :
+			filter_file "$MOCK/same-pref-filters"
 			case " $* " in *' pref 365 '*) :;; *) cat "$MOCK/foreign-filters" 2>/dev/null || :;; esac
 			exit 0;;
 	esac
