@@ -1,0 +1,331 @@
+#!/bin/sh
+# C2000MAX USB-NR egress queue. This never changes HNAT, packet/connection
+# marks, routing, firewall, firmware environments or persistent storage.
+
+STATE=${C2000MAX_NRQOS_STATE:-/var/run/c2000max-nrqos}
+SYS=${C2000MAX_NRQOS_SYS:-/sys}
+BOARD=${C2000MAX_NRQOS_BOARD:-/tmp/sysinfo/board_name}
+COMPAT=${C2000MAX_NRQOS_COMPAT:-/usr/lib/c2000max/qos-compat.sh}
+RATE_AWK=${C2000MAX_NRQOS_AWK:-/usr/lib/c2000max/nrqos-autorate.awk}
+HANDLE=365:
+LOCKED=0
+RUN_TOKEN=
+
+get() { uci -q get "c2000max_nrqos.main.$1" 2>/dev/null; }
+uint() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le 8 ]; }
+bounded() { uint "$1" && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
+bool() { [ "$1" = 0 ] || [ "$1" = 1 ]; }
+error() {
+	mkdir -p "$STATE"
+	printf '%s\n' "$*" > "$STATE/error"
+	logger -t c2000max-nrqos "$*" 2>/dev/null || :
+	return 1
+}
+lock() {
+	if mkdir "$STATE.lock" 2>/dev/null; then
+		printf '%s\n' "$$" > "$STATE.lock/pid"; LOCKED=1; return 0
+	fi
+	# A crashed owner may leave a lock. Never signal an unrelated process.
+	oldpid=$(cat "$STATE.lock/pid" 2>/dev/null)
+	if uint "$oldpid" && ! kill -0 "$oldpid" 2>/dev/null; then
+		rm -f "$STATE.lock/pid"
+		rmdir "$STATE.lock" 2>/dev/null || return 1
+		mkdir "$STATE.lock" 2>/dev/null || return 1
+		printf '%s\n' "$$" > "$STATE.lock/pid"; LOCKED=1; return 0
+	fi
+	return 1
+}
+unlock() { if [ "$LOCKED" = 1 ]; then rm -f "$STATE.lock/pid"; rmdir "$STATE.lock"; LOCKED=0; fi; }
+process_token() {
+	local pid=$1 start state
+	uint "$pid" || return 1
+	[ -r "/proc/$pid/stat" ] || return 1
+	# The process name between parentheses may contain spaces; remove it first.
+	state=$(sed 's/^.*) //' "/proc/$pid/stat" 2>/dev/null) || return 1
+	case "$state" in 'Z '*) return 1;; esac
+	start=$(printf '%s\n' "$state" | awk '{print $20}')
+	case "$start" in ''|*[!0-9]*) return 1;; esac
+	printf '%s:%s\n' "$pid" "$start"
+}
+session_alive() {
+	local token=$1 pid
+	pid=${token%%:*}
+	[ "$(process_token "$pid")" = "$token" ]
+}
+register_run() {
+	local other
+	RUN_TOKEN=$(process_token "$$") || { error 'Cannot identify supervisor process'; return 1; }
+	lock || { error 'NR QoS is busy'; return 1; }
+	other=$(cat "$STATE/session" 2>/dev/null)
+	if [ -n "$other" ] && session_alive "$other"; then
+		unlock; error 'Another NR QoS supervisor is already running'; return 1
+	fi
+	mkdir -p "$STATE"
+	printf '%s\n' "$RUN_TOKEN" > "$STATE/session"
+	unlock
+}
+root_line() { tc qdisc show dev "$IFACE" 2>/dev/null | awk '$4 == "dev" { next } / root / {print; exit}'; }
+owned() {
+	[ -f "$STATE/owner" ] && [ "$(cat "$STATE/interface" 2>/dev/null)" = "$IFACE" ] || return 1
+	case "$(root_line)" in "qdisc cake $HANDLE root "*) return 0;; esac
+	return 1
+}
+ipv4() {
+	printf '%s\n' "$1" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || length($i)>3 || $i>255) exit 1; if($1==0 || $1>=224 || $1==127) exit 1}'
+}
+config() {
+	[ "$(cat "$BOARD" 2>/dev/null)" = nradio,c2000-max ] || { error 'Only C2000MAX is supported'; return 1; }
+	ENABLED=$(get enabled); ENABLED=${ENABLED:-0}
+	IFACE=$(get interface); IFACE=${IFACE:-eth2}
+	RATE=$(get upload_kbit); MIN=$(get min_upload_kbit); MAX=$(get max_upload_kbit)
+	AUTO=$(get autorate); AUTO=${AUTO:-0}
+	INTERVAL=$(get interval); INTERVAL=${INTERVAL:-3}
+	TARGET=$(get delay_target_ms); TARGET=${TARGET:-15}
+	HOSTS=$(get ping_hosts); HOSTS=${HOSTS:-223.5.5.5 119.29.29.29}
+	bool "$ENABLED" && bool "$AUTO" || { error 'enabled/autorate must be 0 or 1'; return 1; }
+	[ "$IFACE" = eth2 ] || { error 'Only USB modem eth2 egress is supported'; return 1; }
+	[ "$ENABLED" = 1 ] || return 0
+	bounded "$RATE" 128 1000000 || { error 'upload_kbit must be 128..1000000'; return 1; }
+	if [ "$AUTO" = 1 ]; then
+		bounded "$MIN" 128 1000000 && bounded "$MAX" 128 1000000 && [ "$MIN" -le "$RATE" ] && [ "$RATE" -le "$MAX" ] || { error 'Autorate requires measured bounds: 128 <= min <= upload <= max <= 1000000'; return 1; }
+	else
+		MIN=$RATE; MAX=$RATE
+	fi
+	# Hidden autorate fields must not prevent fixed-rate mode from starting.
+	if [ "$AUTO" != 1 ]; then INTERVAL=3; return 0; fi
+	bounded "$INTERVAL" 2 30 && bounded "$TARGET" 5 200 || { error 'interval must be 2..30; delay target must be 5..200 ms'; return 1; }
+	# Disable glob expansion only while splitting untrusted list input. The
+	# SQM compatibility helper below needs normal globbing for *.state files.
+	set -f; set -- $HOSTS; set +f
+	[ "$#" -ge 2 ] && [ "$#" -le 3 ] || { error 'Use two or three distinct IPv4 ping targets'; return 1; }
+	seen=' '
+	for host in "$@"; do
+		ipv4 "$host" || { error 'Invalid IPv4 ping target'; return 1; }
+		case "$seen" in *" $host "*) error 'Ping targets must be distinct'; return 1;; esac
+		seen="$seen$host "
+	done
+}
+conflicts() {
+	if [ -f "$COMPAT" ]; then
+		. "$COMPAT"
+		if c2000_sqm_enabled; then error 'SQM owns shaping; disable SQM before enabling NR QoS'; return 1; fi
+	fi
+	# Both enabled configuration and a still-live backend constitute ownership.
+	if [ "$(uci -q get eqos.config.enabled 2>/dev/null)" = 1 ] ||
+	   [ "$(uci -q get 'eqos.@eqos[0].enabled' 2>/dev/null)" = 1 ] ||
+	   [ -s "${C2000MAX_NRQOS_EQOS_STATE:-/var/run/eqos/backend}" ]; then
+		error 'Device EQoS owns shaping; disable EQoS before enabling NR QoS'; return 1
+	fi
+	# QoSmate may install its qdisc only after configuration is committed.
+	if [ "$(uci -q get qosmate.global.enabled 2>/dev/null)" = 1 ]; then
+		error 'QoSmate is enabled; choose only one egress queue owner'; return 1
+	fi
+}
+queue_set() {
+	# HNAT performs NAT before this egress queue. flows/nonat uses the tuple
+	# present here; it makes no false per-LAN-host fairness claim. besteffort
+	# deliberately ignores untrusted DSCP, and no skb/ct mark bits are used.
+	tc qdisc "$1" dev "$IFACE" root handle "$HANDLE" cake bandwidth "${2}kbit" \
+		besteffort flows nonat no-ack-filter no-split-gso rtt 100ms \
+		overhead 44 mpu 64 memlimit 4mb
+}
+default_root() {
+	# Accept only the kernel's unconfigured defaults. Custom fq_codel settings
+	# (even with handle 0:) are not reproducibly restored and must be refused.
+	printf '%s\n' "$1" | awk '
+	$1!="qdisc" || $3!="0:" || $4!="root" {exit 1}
+	$2=="noqueue" {kind="noqueue"; for(i=5;i<=NF;i++) {if($i=="refcnt") i++; else exit 1}; print kind; exit}
+	$2=="fq_codel" {
+		for(i=5;i<=NF;i++) {
+			k=$i; if(k=="refcnt") {i++;continue}
+			if(k=="ecn") {ecn=1;continue}
+			if(k=="limit" || k=="flows" || k=="quantum" || k=="target" || k=="interval" || k=="memory_limit" || k=="drop_batch") v[k]=$(++i); else exit 1
+		}
+		if(v["limit"]!="10240p" || v["flows"]!="1024" || v["quantum"]!="1514" || v["target"]!="5ms" || v["interval"]!="100ms" || !ecn) exit 1
+		# This firmware builds the OpenWrt 4 MiB fq_codel default, not the
+		# upstream Linux 32 MiB default. Refuse a manually changed memory limit.
+		if(v["memory_limit"]!="4Mb" && v["memory_limit"]!="4MB") exit 1
+		if(v["drop_batch"]!="" && v["drop_batch"]!="64") exit 1
+		print "fq_codel";exit
+	}
+	$2!="noqueue" && $2!="fq_codel" {exit 1}'
+}
+restore_default() {
+	# Deleting our root lets Linux reattach its automatic default (handle 0:).
+	# An explicit "replace root fq_codel" would create handle 8001: and falsely
+	# look foreign on the next enable. Never overwrite a concurrently new root.
+	case "$1:$(root_line)" in
+		"fq_codel:qdisc fq_codel 0: root "*|"pfifo_fast:qdisc pfifo_fast 0: root "*|"noqueue:qdisc noqueue 0: root "*) return 0;;
+		*) return 1;;
+	esac
+}
+topology() {
+	[ -d "$SYS/class/net/$IFACE" ] || { error 'USB modem eth2 is absent'; return 1; }
+	driver=$(basename "$(readlink -f "$SYS/class/net/$IFACE/device/driver" 2>/dev/null)")
+	case "$driver" in cdc_ncm|huawei_cdc_ncm) :;; *) error 'eth2 is not a supported USB NCM modem'; return 1;; esac
+	# This first implementation supports the primary NR uplink only. A WAN or
+	# policy-routing transition must not silently claim NR latency protection.
+	default_dev=$(ip -4 route show default 2>/dev/null | awk '/^default / { for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit} }')
+	[ "$default_dev" = "$IFACE" ] || { error 'Primary IPv4 default route is not eth2; NR QoS requires primary 5G mode'; return 1; }
+}
+start_queue() {
+	config || return 1
+	[ "$ENABLED" = 1 ] || { stop_all; return $?; }
+	command -v tc >/dev/null && command -v jq >/dev/null || { error 'tc with CAKE support and jq are required'; return 1; }
+	topology || return 1
+	conflicts || return 1
+	lock || { error 'NR QoS is busy'; return 1; }
+	mkdir -p "$STATE"
+	other=$(cat "$STATE/session" 2>/dev/null)
+	if [ -n "$other" ] && [ "$other" != "$RUN_TOKEN" ] && session_alive "$other"; then
+		unlock; error 'Supervisor active; use service restart to change settings'; return 1
+	fi
+	queue_token=${RUN_TOKEN:-manual:$(process_token "$$")}
+	if owned; then
+		queue_set change "$RATE" || { unlock; error 'Could not update CAKE; previous queue is retained'; return 1; }
+		printf '%s\n' "$queue_token" > "$STATE/queue-session"
+	else
+		line=$(root_line)
+		original=$(default_root "$line") || { unlock; error 'Foreign/non-default root qdisc detected; not modified'; return 1; }
+		# Record recovery information before replacing the default queue.
+		printf '%s\n' "$IFACE" > "$STATE/interface"
+		printf '%s\n' "$original" > "$STATE/original"
+		printf '%s\n' "$line" > "$STATE/original-qdisc"
+		printf 'c2000max-nrqos-v1\n' > "$STATE/owner"
+		printf '%s\n' "$queue_token" > "$STATE/queue-session"
+		if ! queue_set replace "$RATE"; then
+			if owned; then tc qdisc del dev "$IFACE" root handle "$HANDLE" 2>/dev/null || :; restore_default "$original" || :; fi
+			rm -f "$STATE/owner" "$STATE/queue-session"
+			unlock; error 'CAKE setup failed; NR QoS was not activated'; return 1
+		fi
+	fi
+	printf '%s\n' "$RATE" > "$STATE/rate"
+	printf '%s\n' "$AUTO" > "$STATE/autorate"
+	printf '0\n' > "$STATE/load"
+	printf '0\n' > "$STATE/delay"
+	if [ "$AUTO" = 1 ]; then printf 'starting\n'; else printf 'disabled-fixed-rate\n'; fi > "$STATE/probes"
+	rm -f "$STATE/error" "$STATE/autorate-state"
+	unlock
+}
+stop_queue() {
+	local expected=$1
+	IFACE=$(cat "$STATE/interface" 2>/dev/null); IFACE=${IFACE:-eth2}
+	[ "$IFACE" = eth2 ] || { error 'Invalid runtime interface; not modifying a queue'; return 1; }
+	lock || { error 'NR QoS is busy'; return 1; }
+	# A delayed old supervisor must never delete a newer session's queue.
+	[ -n "$expected" ] && [ "$(cat "$STATE/queue-session" 2>/dev/null)" = "$expected" ] || { unlock; return 0; }
+	if owned; then
+		original=$(cat "$STATE/original" 2>/dev/null)
+		if ! tc qdisc del dev "$IFACE" root handle "$HANDLE"; then unlock; error 'Could not remove owned CAKE queue'; return 1; fi
+		restore_default "$original" || { unlock; error 'Owned CAKE was removed, but default queue restoration failed'; return 1; }
+	fi
+	# If another plugin replaced our qdisc, leave its queue entirely alone.
+	rm -f "$STATE/owner" "$STATE/queue-session" "$STATE/rate" "$STATE/autorate" "$STATE/interface" "$STATE/original" "$STATE/load" "$STATE/delay" "$STATE/probes" "$STATE/autorate-state"
+	unlock
+}
+release_session() {
+	local expected=$1
+	lock || return 1
+	[ "$(cat "$STATE/session" 2>/dev/null)" != "$expected" ] || rm -f "$STATE/session"
+	unlock
+}
+run_cleanup() {
+	unlock
+	stop_queue "$RUN_TOKEN"
+	release_session "$RUN_TOKEN"
+}
+stop_all() {
+	local token qtoken n
+	lock || { error 'NR QoS is busy'; return 1; }
+	token=$(cat "$STATE/session" 2>/dev/null)
+	qtoken=$(cat "$STATE/queue-session" 2>/dev/null)
+	unlock
+	if [ -n "$token" ] && session_alive "$token"; then
+		kill -TERM "${token%%:*}" || { error 'Cannot stop NR QoS supervisor'; return 1; }
+		n=0
+		while [ "$(cat "$STATE/session" 2>/dev/null)" = "$token" ] && session_alive "$token"; do
+			[ "$n" -lt 5 ] || { error 'Supervisor stop timed out; queue retained until safe cleanup'; return 1; }
+			# The target BusyBox sleep only accepts whole seconds.
+			sleep 1; n=$((n+1))
+		done
+	fi
+	[ -z "$token" ] || release_session "$token" || return 1
+	[ -z "$qtoken" ] || stop_queue "$qtoken"
+}
+change_rate() {
+	bounded "$1" "$MIN" "$MAX" || return 1
+	lock || return 1
+	if ! owned || [ "$(cat "$STATE/queue-session" 2>/dev/null)" != "$RUN_TOKEN" ]; then unlock; error 'Queue ownership was lost; autorate stopped'; return 1; fi
+	if queue_set change "$1"; then printf '%s\n' "$1" > "$STATE/rate"; unlock; return 0; fi
+	unlock; error 'CAKE rate update failed; previous rate retained'; return 1
+}
+uptime_ms() { awk '{printf "%.0f\n", $1*1000}' "${C2000MAX_NRQOS_UPTIME:-/proc/uptime}"; }
+queue_bytes() { tc -s qdisc show dev "$IFACE" | awk '/^qdisc cake 365: / {on=1;next} /^qdisc / {on=0} on && /Sent / {print $2;exit}'; }
+sample() {
+	# A private temporary input is moved atomically; malformed responses never
+	# become shell code and each target uses its own learned RTT baseline.
+	: > "$STATE/samples.new"
+	for host in $HOSTS; do
+		ms=$(ping -n -I "$IFACE" -c 1 -W 1 "$host" 2>/dev/null | sed -n 's/.*time[=<]\([0-9.]*\) *ms.*/\1/p' | head -1)
+		case "$ms" in ''|*[!0-9.]*) ms=0;; esac
+		printf '%s %s\n' "$host" "$ms" >> "$STATE/samples.new"
+	done
+	mv "$STATE/samples.new" "$STATE/samples"
+}
+run_loop() {
+	config || return 1
+	[ "$ENABLED" = 1 ] || { stop_all; return $?; }
+	register_run || return 1
+	trap 'exit 0' TERM INT
+	trap 'run_cleanup' EXIT
+	start_queue || return 1
+	last_time=$(uptime_ms); last_bytes=$(queue_bytes)
+	while :; do
+		# Short waits allow SIGTERM cleanup even when interval is configured 30s.
+		pause=$INTERVAL
+		while [ "$pause" -gt 0 ]; do sleep 1; pause=$((pause-1)); done
+		if ! owned || [ "$(cat "$STATE/queue-session" 2>/dev/null)" != "$RUN_TOKEN" ]; then error 'Queue ownership was lost; service stopped without touching the new queue'; return 1; fi
+		topology && conflicts || return 1
+		[ "$AUTO" != 1 ] || sample
+		now=$(uptime_ms); bytes=$(queue_bytes); current=$(cat "$STATE/rate")
+		case "$bytes:$last_bytes" in *[!0-9:]*|:*|*:) last_time=$now; last_bytes=$bytes; continue;; esac
+		elapsed=$((now-last_time)); delta=$((bytes-last_bytes)); last_time=$now; last_bytes=$bytes
+		[ "$elapsed" -gt 0 ] && [ "$delta" -ge 0 ] || continue
+		load=$(awk -v b="$delta" -v ms="$elapsed" -v r="$current" 'BEGIN {printf "%.0f", b*8*100/ms/r}')
+		printf '%s\n' "$load" > "$STATE/load"
+		[ "$AUTO" = 1 ] || continue
+		[ -f "$STATE/autorate-state" ] || : > "$STATE/autorate-state"
+		result=$(awk -v current="$current" -v minimum="$MIN" -v maximum="$MAX" -v target="$TARGET" -v utilization="$load" \
+			-v state_out="$STATE/autorate-state.new" -f "$RATE_AWK" "$STATE/autorate-state" "$STATE/samples") || { error 'Autorate calculation failed'; return 1; }
+		mv "$STATE/autorate-state.new" "$STATE/autorate-state"
+		set -- $result
+		[ "$#" = 4 ] || { error 'Invalid autorate result'; return 1; }
+		next=$1; delay=$2; healthy=$3; decision=$4
+		printf '%s\n' "$delay" > "$STATE/delay"
+		printf '%s:%s\n' "$healthy" "$decision" > "$STATE/probes"
+		[ "$next" = "$current" ] || change_rate "$next" || return 1
+	done
+}
+status() {
+	IFACE=$(cat "$STATE/interface" 2>/dev/null); IFACE=${IFACE:-eth2}
+	active=false; owned && active=true
+	enabled=$(get enabled); [ "$enabled" = 1 ] && enabled=true || enabled=false
+	rate=$(cat "$STATE/rate" 2>/dev/null); uint "$rate" || rate=0
+	load=$(cat "$STATE/load" 2>/dev/null); uint "$load" || load=0
+	delay=$(cat "$STATE/delay" 2>/dev/null); uint "$delay" || delay=0
+	auto=$(cat "$STATE/autorate" 2>/dev/null); [ "$auto" = 1 ] && auto=true || auto=false
+	jq -n --argjson enabled "$enabled" --argjson active "$active" --arg interface "$IFACE" \
+		--argjson upload_kbit "$rate" --argjson autorate "$auto" --argjson load_percent "$load" \
+		--argjson delay_ms "$delay" --arg probes "$(cat "$STATE/probes" 2>/dev/null)" \
+		--arg error "$(cat "$STATE/error" 2>/dev/null)" \
+		'{enabled:$enabled,active:$active,interface:$interface,upload_kbit:$upload_kbit,autorate:$autorate,load_percent:$load_percent,delay_ms:$delay_ms,probes:$probes,error:$error,direction:"upload",scheduler:"cake",hnat_control:"untouched",dataplane_verified:false}'
+}
+
+trap 'unlock' EXIT
+case "${1:-status}" in
+	start|reload) start_queue;;
+	stop) stop_all;;
+	run) run_loop;;
+	status) status;;
+	*) printf 'Usage: %s {start|stop|reload|run|status}\n' "$0" >&2; exit 2;;
+esac

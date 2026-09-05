@@ -1,5 +1,12 @@
 #!/bin/sh
 
+# The optional NR shaper owns this single root handle; it does not request
+# disabling HNAT and must never be included in c2000_sqm_enabled().
+c2000_nrqos_active()
+{
+	tc qdisc show dev eth2 2>/dev/null | grep -q '^qdisc cake 365: root'
+}
+
 # Do not config_load here: callers can be iterating EQoS or network sections.
 c2000_sqm_enabled()
 {

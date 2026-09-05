@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# Read-only status bridge. Configuration writes use the scoped UCI ACL.
+case "$1" in
+	list)
+		printf '%s\n' '{"status":{}}'
+		;;
+	call)
+		case "$2" in
+			status)
+				if [ -x /usr/sbin/c2000max-nrqos ]; then
+					exec /usr/sbin/c2000max-nrqos status
+				fi
+				printf '%s\n' '{"enabled":false,"active":false,"error":"低延迟 QoS 后端未安装"}'
+				;;
+			*) exit 1 ;;
+		esac
+		;;
+	*) exit 1 ;;
+esac

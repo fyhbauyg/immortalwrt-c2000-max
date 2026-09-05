@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
 PKG_VERSION:=2.36.5
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -14,7 +14,7 @@ define Package/c2000max-board
 	DEPENDS:=+qmodem +luci-base +jq +jsonfilter +ip-full +firewall4 \
 	+kmod-dummy +kmod-mediatek_hnat +mtkhnat_util +hnat-detect \
 	+luci-app-turboacc-mtk +luci-app-eqos-mtk +luci-app-c2000max-traffic \
-	+mwan3 +coreutils-timeout \
+	+mwan3 +coreutils-timeout +tc +kmod-sched-cake \
 	+flock +uboot-envtools +zram-swap +gawk +grep +sed +coreutils-sort +sfdisk +mwctl
 endef
 
@@ -25,6 +25,7 @@ endef
 
 define Package/c2000max-board/conffiles
 /etc/config/c2000max
+/etc/config/c2000max_nrqos
 endef
 
 define Build/Prepare
@@ -44,6 +45,8 @@ define Package/c2000max-board/install
 	$(INSTALL_DIR) $(1)/etc/config $(1)/etc/init.d $(1)/etc/uci-defaults $(1)/etc/rc.d $(1)/lib/preinit
 	$(INSTALL_DATA) ./files/etc/c2000max-build $(1)/etc/c2000max-build
 	$(INSTALL_CONF) ./files/etc/config/c2000max $(1)/etc/config/c2000max
+	$(INSTALL_CONF) ./files/etc/config/c2000max_nrqos $(1)/etc/config/c2000max_nrqos
+	$(INSTALL_BIN) ./files/etc/init.d/c2000max-nrqos $(1)/etc/init.d/c2000max-nrqos
 	$(INSTALL_BIN) ./files/etc/init.d/c2000max-sim $(1)/etc/init.d/c2000max-sim
 	$(INSTALL_BIN) ./files/etc/init.d/c2000max-leds $(1)/etc/init.d/c2000max-leds
 	$(INSTALL_BIN) ./files/etc/init.d/c2000max-fan $(1)/etc/init.d/c2000max-fan
@@ -57,16 +60,19 @@ define Package/c2000max-board/install
 	$(INSTALL_DATA) ./files/etc/sysctl.d/99-c2000max-low-memory.conf $(1)/etc/sysctl.d/99-c2000max-low-memory.conf
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
 	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/98-c2000max-uplink $(1)/etc/hotplug.d/iface/98-c2000max-uplink
+	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/99-c2000max-nrqos $(1)/etc/hotplug.d/iface/99-c2000max-nrqos
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-c2000max-defaults $(1)/etc/uci-defaults/99-c2000max-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/98-c2000max-passwordless $(1)/etc/uci-defaults/98-c2000max-passwordless
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-y-c2000max-v3601-services $(1)/etc/uci-defaults/99-y-c2000max-v3601-services
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-z-c2000max-feed-fix $(1)/etc/uci-defaults/99-z-c2000max-feed-fix
 	$(INSTALL_BIN) ./files/lib/preinit/79_c2000max_grow_tf $(1)/lib/preinit/79_c2000max_grow_tf
 	ln -sf ../init.d/c2000max-hnat $(1)/etc/rc.d/S91c2000max-hnat
+	ln -sf ../init.d/c2000max-nrqos $(1)/etc/rc.d/S97c2000max-nrqos
 	ln -sf ../init.d/eqos $(1)/etc/rc.d/S99eqos
 	ln -sf ../init.d/c2000max-mlo-interlock $(1)/etc/rc.d/S18c2000max-mlo-interlock
 	ln -sf ../init.d/c2000max-wifi-performance $(1)/etc/rc.d/S17c2000max-wifi-performance
 	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_BIN) ./files/usr/sbin/c2000max-nrqos $(1)/usr/sbin/c2000max-nrqos
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-sim $(1)/usr/sbin/c2000max-sim
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-leds $(1)/usr/sbin/c2000max-leds
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-fan $(1)/usr/sbin/c2000max-fan
@@ -91,13 +97,16 @@ define Package/c2000max-board/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/c2000max-stun $(1)/usr/bin/c2000max-stun
 	$(INSTALL_DIR) $(1)/usr/lib/c2000max
+	$(INSTALL_DATA) ./files/usr/lib/c2000max/nrqos-autorate.awk $(1)/usr/lib/c2000max/nrqos-autorate.awk
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/port-role.sh $(1)/usr/lib/c2000max/port-role.sh
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/qos-compat.sh $(1)/usr/lib/c2000max/qos-compat.sh
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/uplink-mode.sh $(1)/usr/lib/c2000max/uplink-mode.sh
 	$(INSTALL_BIN) ./files/usr/lib/c2000max/official-return-tf $(1)/usr/lib/c2000max/official-return-tf
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
+	$(INSTALL_BIN) ./files/usr/libexec/rpcd/c2000max-nrqos $(1)/usr/libexec/rpcd/c2000max-nrqos
 	$(INSTALL_BIN) ./files/usr/libexec/rpcd/c2000max $(1)/usr/libexec/rpcd/c2000max
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/c2000max
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/c2000max/nrqos.js $(1)/www/luci-static/resources/view/c2000max/nrqos.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/c2000max/sim.js $(1)/www/luci-static/resources/view/c2000max/sim.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/c2000max/sim_v8.js $(1)/www/luci-static/resources/view/c2000max/sim_v8.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/c2000max/fan.js $(1)/www/luci-static/resources/view/c2000max/fan.js
@@ -108,6 +117,8 @@ define Package/c2000max-board/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/status/include
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/status/include/15_c2000max_v16.js $(1)/www/luci-static/resources/view/status/include/15_c2000max_v16.js
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d $(1)/usr/share/rpcd/acl.d
+	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/c2000max-nrqos.json $(1)/usr/share/luci/menu.d/c2000max-nrqos.json
+	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/c2000max-nrqos.json $(1)/usr/share/rpcd/acl.d/c2000max-nrqos.json
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/c2000max.json $(1)/usr/share/luci/menu.d/c2000max.json
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/zzzz-c2000max-reboot-last.json $(1)/usr/share/luci/menu.d/zzzz-c2000max-reboot-last.json
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/c2000max.json $(1)/usr/share/rpcd/acl.d/c2000max.json

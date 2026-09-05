@@ -1,0 +1,14 @@
+{
+	"c2000max-nrqos": {
+		"description": "Grant access to C2000MAX NR uplink QoS settings and status",
+		"read": {
+			"ubus": {
+				"c2000max-nrqos": [ "status" ]
+			},
+			"uci": [ "c2000max_nrqos" ]
+		},
+		"write": {
+			"uci": [ "c2000max_nrqos" ]
+		}
+	}
+}

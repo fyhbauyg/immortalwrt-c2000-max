@@ -354,6 +354,10 @@ eqos_start_service_locked() {
 			echo 'SQM 低延迟队列已启用，设备限速暂停以避免队列冲突；关闭 SQM 后可恢复。' >&2
 			return 1
 		fi
+		if command -v c2000_nrqos_active >/dev/null 2>&1 && c2000_nrqos_active; then
+			logger -t eqos 'NR QoS owns the cellular queue; disable NR QoS before enabling EQoS'
+			return 1
+		fi
 	fi
 	config_load eqos
 

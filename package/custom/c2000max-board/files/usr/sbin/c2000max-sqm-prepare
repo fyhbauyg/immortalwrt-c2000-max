@@ -11,6 +11,13 @@ if [ "${1:-prepare}" = restore ]; then
 fi
 c2000_sqm_enabled || exit 0
 
+# SQM owns the selected queue exclusively. Stop the optional NR controller
+# before SQM is allowed to install or remove anything on eth2.
+if c2000_nrqos_active; then
+	/etc/init.d/c2000max-nrqos stop || exit 1
+	c2000_nrqos_active && exit 1
+fi
+
 # Leave user EQoS settings intact, but give the selected SQM queue sole
 # ownership. Teardown is before SQM installs its qdisc, never after it.
 if [ -s /var/run/eqos/backend ]; then
