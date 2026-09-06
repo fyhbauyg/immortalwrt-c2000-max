@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
 PKG_VERSION:=2.36.5
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -98,6 +98,7 @@ define Package/c2000max-board/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/c2000max-stun $(1)/usr/bin/c2000max-stun
 	$(INSTALL_DIR) $(1)/usr/lib/c2000max
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/nrqos-autorate.awk $(1)/usr/lib/c2000max/nrqos-autorate.awk
+	$(INSTALL_DATA) ./files/usr/lib/c2000max/nrqos-hqos.sh $(1)/usr/lib/c2000max/nrqos-hqos.sh
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/port-role.sh $(1)/usr/lib/c2000max/port-role.sh
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/qos-compat.sh $(1)/usr/lib/c2000max/qos-compat.sh
 	$(INSTALL_DATA) ./files/usr/lib/c2000max/uplink-mode.sh $(1)/usr/lib/c2000max/uplink-mode.sh

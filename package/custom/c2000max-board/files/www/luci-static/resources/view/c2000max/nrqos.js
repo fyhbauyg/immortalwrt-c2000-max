@@ -59,6 +59,8 @@ function renderStatus(data) {
 	var enabled = flag(data.enabled), active = flag(data.active);
 	var downActive = flag(data.download_active), downEnabled = flag(data.download_enabled);
 	var state = active ? (downActive ? _('双向 CAKE 队列运行中') : _('上行 CAKE 队列运行中')) : (enabled ? _('配置已启用，队列未运行') : _('已关闭'));
+	if (active && downActive && data.download_backend === 'hqos')
+		state = _('上行 CAKE + 下行硬件 HQoS 运行中（实验）');
 	if (active && downEnabled && !downActive)
 		state = _('下行队列未就绪，请检查错误');
 	if (active && !enabled)
@@ -69,7 +71,8 @@ function renderStatus(data) {
 		[ _('运行状态'), state ],
 		[ _('当前上行限速'), active ? rate(data.upload_kbit) : '—' ],
 		[ _('当前下行限速'), downActive ? rate(data.download_kbit) : _('未启用 / 未运行') ],
-		[ _('硬件加速'), _('本功能不修改 HNAT 开关；硬件命中与延迟改善仍需流量实测。') ]
+		[ _('硬件加速'), data.download_backend === 'hqos' && downActive ? _('保留 HNAT，只启用下行 QDMA；USB 上行保留 CAKE。') : _('本功能不修改 HNAT 开关；硬件命中与延迟改善仍需流量实测。') ],
+		[ _('设备限速兼容策略'), _('限速插件优先：启用设备限速时先退出 NR QoS，不同时抢占队列。关闭限速后，请重新应用 NR QoS。') ]
 	];
 	if (active && flag(data.autorate)) {
 		var delay = data.delay_ms == null ? NaN : Number(data.delay_ms);
@@ -94,8 +97,10 @@ function renderStatus(data) {
 		content.push(E('p', { 'class': 'alert-message warning' }, [ _('未生效原因 / 最近错误：'), String(data.error) ]));
 	if (data._rpc_error)
 		content.push(E('p', { 'class': 'alert-message warning' }, _('无法读取运行状态，请检查服务与 RPC 是否可用。')));
-	else if (data.active != null && data.api_version !== 2)
-		content.push(E('p', { 'class': 'alert-message warning' }, _('后端仍为旧版本，当前不支持下行整形；请确认已更新到 NRQOS2 固件。')));
+	else if (data.active != null && data.api_version !== 3)
+		content.push(E('p', { 'class': 'alert-message warning' }, _('后端仍为旧版本，请确认已更新到 NRQOS3 固件并清理浏览器缓存。')));
+	if (downActive && data.download_backend === 'hqos')
+		content.push(E('p', { 'class': 'alert-message notice' }, _('硬件分类支持 IPv4/IPv6，但仅 Wi-Fi IPv4 单队列路径经过实机验证；多队列、网线、IPv6 和满载游戏延迟仍需验收。更改规则会清除硬件流缓存后重新学习，不删除 NAT 连接。')));
 	return E('div', {}, content);
 }
 
@@ -110,7 +115,7 @@ return view.extend({
 
 	render: function(status) {
 		var m = new form.Map('c2000max_nrqos', _('5G NR 低延迟 QoS'),
-			_('v2 双向整形：使用 CAKE 公平排队，同时处理上传及其他设备下载占满的场景。下行在 eth2 接收入口经 IFB 整形；只支持默认出口为 eth2 的 5G 模式，不支持完整的 WAN / 双 WAN 整形。'));
+			_('v3 双向整形：上行使用 CAKE，下行可选 CAKE/IFB 或实验性 QDMA 硬件 HQoS。只支持 eth2 为默认出口的纯 5G 模式；不支持 WAN / 双 WAN。硬件限速不等同于 CAKE 主动队列管理，不能保证降低游戏延迟。'));
 		var s = m.section(form.NamedSection, 'main', 'main', _('队列设置'));
 		s.addremove = false;
 		s.anonymous = true;
@@ -118,7 +123,7 @@ return view.extend({
 		var enabled = s.option(form.Flag, 'enabled', _('启用低延迟 QoS'));
 		enabled.default = '0';
 		enabled.rmempty = false;
-		enabled.description = _('默认关闭。与 SQM、C2000MAX 网络限速互斥，不会自动关闭这些插件。');
+		enabled.description = _('默认关闭。不会关闭 SQM 或设备限速；设备限速优先，NR QoS 会先安全退出再交还队列，配置保留。');
 
 		var o = s.option(form.ListValue, 'interface', _('5G 上行接口'));
 		o.value('eth2', 'eth2');
@@ -139,6 +144,22 @@ return view.extend({
 		downloadEnabled.retain = true;
 		downloadEnabled.depends('enabled', '1');
 		downloadEnabled.description = _('减少其他设备下载造成的排队；旧配置缺少此项时不会在后台自动开启，请保存并应用。');
+		var backend = s.option(form.ListValue, 'download_backend', _('下行队列模式'));
+		backend.value('cake', _('CAKE / IFB（软件公平队列）'));
+		backend.value('hqos', _('QDMA HQoS（硬件实验模式）'));
+		backend.default = 'cake';
+		backend.rmempty = false;
+		backend.retain = true;
+		backend.depends({ enabled: '1', download_enabled: '1' });
+		backend.description = _('硬件模式使用 3 个独立队列：普通、网页/下载、指定游戏 UDP/ICMP。调度器限制总量，优先队列上限为总量约 20%，防止优先流量独占。其他代理或软件绕过流量不保证受硬件约束。');
+		var ports = s.option(form.DynamicList, 'game_udp_ports', _('游戏 UDP 服务端口'));
+		ports.retain = true;
+		ports.depends({ enabled: '1', download_enabled: '1', download_backend: 'hqos' });
+		ports.datatype = 'port';
+		ports.validate = function(section_id, value) {
+			return value === '' || numberInRange(value, 1, 65535) ? true : _('请填写一个 1 至 65535 的整数端口，不支持端口范围。');
+		};
+		ports.description = _('可选，最多 32 个；填写游戏服务器使用的 UDP 端口，不是电脑随机端口。留空不自动识别游戏，只对 ICMP 分配受限优先队列。不要填写所有 UDP。');
 		var download = s.option(form.Value, 'download_kbit', _('下行限速（kbit/s）'));
 		download.default = '130000';
 		download.datatype = 'and(uinteger,range(128,1000000))';
@@ -151,6 +172,10 @@ return view.extend({
 		autorate.default = '0';
 		autorate.rmempty = false;
 		autorate.retain = true;
+		autorate.validate = function(section_id, value) {
+			return flag(value) && flag(downloadEnabled.formvalue(section_id)) && backend.formvalue(section_id) === 'hqos'
+				? _('硬件下行目前仅支持固定限速；请关闭自适应或改用 CAKE。') : true;
+		};
 		autorate.depends('enabled', '1');
 		autorate.description = _('根据各方向实际流量与多个目标 RTT 调速。容量疑似下降时可能短暂大幅降低限速，若延迟没有改善则恢复并暂停探底。无法完全区分基站抖动与排队，请先验证固定双向限速。');
 

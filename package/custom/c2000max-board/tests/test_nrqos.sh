@@ -204,7 +204,7 @@ sh "$HERE/test_nrqos_autorate_v2.sh" "$BOARD_ROOT"
 # implicit migration that can change a working device's receive path.
 reset_case
 sh "$BIN" start
-assert sh -c 'sh "$1" status | jq -e ".api_version == 2 and .download_enabled == false and .download_active == false and .direction == \"upload\"" >/dev/null' sh "$BIN"
+assert sh -c 'sh "$1" status | jq -e ".api_version == 3 and .download_enabled == false and .download_active == false and .direction == \"upload\"" >/dev/null' sh "$BIN"
 assert test ! -s "$TMP/ip.log"
 sh "$BIN" stop
 

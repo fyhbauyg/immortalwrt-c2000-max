@@ -4,6 +4,7 @@
 # disabling HNAT and must never be included in c2000_sqm_enabled().
 c2000_nrqos_active()
 {
+	[ -f /var/run/c2000max-nrqos/hqos/owner ] && return 0
 	tc qdisc show dev eth2 2>/dev/null | grep -q '^qdisc cake 365: root' && return 0
 	# Also protect a partially stopped pair: SQM must wait for the owned IFB
 	# redirect to be removed even if the upload root was already replaced.

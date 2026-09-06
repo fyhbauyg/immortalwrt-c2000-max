@@ -77,6 +77,16 @@ ip)
 		*) exit 1;;
 	esac;;
 logger) :;;
+nft)
+	case "$*" in
+		'list tables') [ ! -f "$MOCK/hq-table" ] || printf 'table inet c2000max_nr_hqos\n'; exit 0;;
+		'-c -f '*) exit 0;;
+		'-f '*) cp "$2" "$MOCK/hq-table";;
+		'list table inet '*|'-s list table inet '*) [ -f "$MOCK/hq-table" ] && cat "$MOCK/hq-table";;
+		'delete table inet '*) rm "$MOCK/hq-table";;
+		*) exit 1;;
+	esac;;
+mount) printf '/dev/mmcblk0p6 on /rom type squashfs (ro)\n';;
 sleep)
 	# Match the target BusyBox feature set; accelerate valid integer waits.
 	case "${1:-}" in ''|*[!0-9]*) printf 'sleep: invalid number\n' >&2; exit 1;; esac

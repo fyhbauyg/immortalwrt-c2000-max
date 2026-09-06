@@ -2,6 +2,7 @@
 # Copyright (C) 2006 OpenWrt.org
 
 . /lib/functions/system.sh
+[ ! -r /usr/lib/c2000max/qos-compat.sh ] || . /usr/lib/c2000max/qos-compat.sh
 
 START=99
 USE_PROCD=1
@@ -26,6 +27,7 @@ EQOS_ERROR_FILE="$EQOS_RUNTIME_DIR/last_error"
 EQOS_PROFILE_FILE="$EQOS_RUNTIME_DIR/profiles"
 EQOS_HNAT_DIR="${EQOS_HNAT_DIR:-/sys/kernel/debug/hnat}"
 EQOS_IP="${EQOS_IP:-ip}"
+C2000_NRQOS_BIN="${C2000_NRQOS_BIN:-/usr/sbin/c2000max-nrqos}"
 EQOS_SYS_CLASS_NET="${EQOS_SYS_CLASS_NET:-/sys/class/net}"
 HNAT_UP_PROFILES=""
 HNAT_DL_PROFILES=""
@@ -346,16 +348,21 @@ parse_device() {
 	done
 }
 
+c2000_eqos_yield_nrqos() {
+	if command -v c2000_nrqos_active >/dev/null 2>&1 && c2000_nrqos_active; then
+		if ! "$C2000_NRQOS_BIN" yield-to-eqos || c2000_nrqos_active; then
+			echo 'NR QoS 尚未安全退出，保留限速配置但未覆盖队列；请查看 NR QoS 错误后重试。' >&2
+			return 1
+		fi
+	fi
+}
+
 eqos_start_service_locked() {
 	if [ "$(board_name)" = nradio,c2000-max ] &&
 	   [ -r /usr/lib/c2000max/qos-compat.sh ]; then
 		. /usr/lib/c2000max/qos-compat.sh
 		if c2000_sqm_enabled; then
 			echo 'SQM 低延迟队列已启用，设备限速暂停以避免队列冲突；关闭 SQM 后可恢复。' >&2
-			return 1
-		fi
-		if command -v c2000_nrqos_active >/dev/null 2>&1 && c2000_nrqos_active; then
-			logger -t eqos 'NR QoS owns the cellular queue; disable NR QoS before enabling EQoS'
 			return 1
 		fi
 	fi
@@ -419,6 +426,12 @@ eqos_start_service_locked() {
 	config_foreach validate_device device
 	[ "$CONFIG_ERROR" -eq 0 ] || return 1
 
+	# Device caps have priority. Yield only after validating their complete
+	# configuration and while holding ROLE -> HNAT. The NR supervisor uses
+	# nonblocking hardware locks; its recovery is retried by this lock owner.
+	# Never remove the mutual exclusion without handing ownership back first.
+	c2000_eqos_yield_nrqos || return 1
+
 	# Take a final snapshot before either accelerator cache is invalidated.
 	# mib-sync is lock-aware and cheap. Do not invoke a full traffic sample while
 	# the acceleration lock is held: the sampler owns collector.lock and may in
@@ -457,6 +470,15 @@ eqos_start_service_locked() {
 }
 
 eqos_stop_service_locked() {
+	# An inactive EQoS service owns no QDMA state. Do not reset NR HQoS when
+	# the user stops/disables an already inactive device limiter.
+	if command -v c2000_nrqos_active >/dev/null 2>&1 && c2000_nrqos_active; then
+		if eqos_runtime_active; then
+			echo 'Conflicting NR QoS/EQoS ownership; queue reset refused' >&2
+			return 1
+		fi
+		return 0
+	fi
 	eqos stop
 	rm -f "$EQOS_PROFILE_FILE" "$EQOS_PROFILE_FILE.tmp"
 }

@@ -1,12 +1,13 @@
 #!/bin/sh
-# C2000MAX USB-NR queues. This never changes HNAT, packet/connection
-# marks, routing, firewall, firmware environments or persistent storage.
+# C2000MAX USB-NR queues. CAKE is unchanged; optional downstream HQoS owns
+# only reserved queues and a private classifier. Never writes MTD/bootenv.
 
 STATE=${C2000MAX_NRQOS_STATE:-/var/run/c2000max-nrqos}
 SYS=${C2000MAX_NRQOS_SYS:-/sys}
 BOARD=${C2000MAX_NRQOS_BOARD:-/tmp/sysinfo/board_name}
 COMPAT=${C2000MAX_NRQOS_COMPAT:-/usr/lib/c2000max/qos-compat.sh}
 RATE_AWK=${C2000MAX_NRQOS_AWK:-/usr/lib/c2000max/nrqos-autorate.awk}
+HQ_LIB=${C2000MAX_NRQOS_HQ_LIB:-/usr/lib/c2000max/nrqos-hqos.sh}
 HANDLE=365:
 DOWN_HANDLE=366:
 IFB=ifb-nrqos
@@ -83,6 +84,7 @@ config() {
 	IFACE=$(get interface); IFACE=${IFACE:-eth2}
 	RATE=$(get upload_kbit); MIN=$(get min_upload_kbit); MAX=$(get max_upload_kbit)
 	DOWN_ENABLED=$(get download_enabled); DOWN_ENABLED=${DOWN_ENABLED:-0}
+	DOWN_BACKEND=$(get download_backend); DOWN_BACKEND=${DOWN_BACKEND:-cake}
 	DOWN_RATE=$(get download_kbit); DOWN_RATE=${DOWN_RATE:-0}
 	DOWN_MIN=$(get min_download_kbit); DOWN_MAX=$(get max_download_kbit)
 	AUTO=$(get autorate); AUTO=${AUTO:-0}
@@ -92,6 +94,11 @@ config() {
 	bool "$ENABLED" && bool "$AUTO" && bool "$DOWN_ENABLED" || { error 'enabled/autorate/download_enabled must be 0 or 1'; return 1; }
 	[ "$IFACE" = eth2 ] || { error 'Only USB modem eth2 egress is supported'; return 1; }
 	[ "$ENABLED" = 1 ] || return 0
+	case "$DOWN_BACKEND" in cake|hqos) :;; *) error 'download_backend must be cake or hqos'; return 1;; esac
+	if [ "$DOWN_ENABLED:$DOWN_BACKEND" = 1:hqos ]; then
+		command -v hq_setup >/dev/null 2>&1 || { error 'Hardware QoS component is not installed'; return 1; }
+		[ "$AUTO" = 0 ] || { error 'Hardware download currently requires fixed rates'; return 1; }
+	fi
 	bounded "$RATE" 128 1000000 || { error 'upload_kbit must be 128..1000000'; return 1; }
 	if [ "$DOWN_ENABLED" = 1 ]; then
 		bounded "$DOWN_RATE" 128 1000000 || { error 'download_kbit must be 128..1000000 when download shaping is enabled'; return 1; }
@@ -144,6 +151,9 @@ queue_set() {
 		overhead 44 mpu 64 memlimit 4mb
 }
 down_queue_set() {
+	if [ "${DOWN_BACKEND:-cake}" = hqos ] || [ -f "$STATE/hqos/owner" ]; then
+		error 'Restart NR QoS to change hardware queue settings'; return 1
+	fi
 	# Incoming packets retain their original tuple. No NAT lookups or marks
 	# are required. IFB reinjection skips the ingress classifier once, using
 	# the kernel's tc_skip_classify/redirected path rather than custom marks.
@@ -200,6 +210,10 @@ down_filter_owned() {
 	printf '%s\n' "$filters" | filter_is_ours "$FILTER_PREF"
 }
 down_owned() {
+	if [ -f "$STATE/hqos/owner" ]; then
+		command -v hq_owned >/dev/null 2>&1 && hq_owned
+		return $?
+	fi
 	down_link_owned && down_filter_owned || return 1
 	# No hidden competing ingress classifier may steal or reorder packets.
 	# Cleanup deliberately uses the weaker per-filter ownership check so a
@@ -209,6 +223,7 @@ down_owned() {
 	return 1
 }
 down_preflight() {
+	if [ "${DOWN_BACKEND:-cake}" = hqos ]; then hq_preflight; return $?; fi
 	# Reserve the whole ingress attachment point. Sharing it with IFB users,
 	# clsact filters or a pre-existing IFB would require unsafe ordering guesses.
 	if down_owned; then return 0; fi
@@ -219,6 +234,11 @@ down_preflight() {
 down_cleanup() {
 	local expected=$1 current_alias current_index filters line
 	[ -n "$expected" ] && [ "$(cat "$STATE/down-session" 2>/dev/null)" = "$expected" ] || return 0
+	if [ -f "$STATE/hqos/owner" ] || [ "$(cat "$STATE/download-backend" 2>/dev/null)" = hqos ]; then
+		command -v hq_cleanup >/dev/null 2>&1 && hq_cleanup "$expected" || return 1
+		rm -f "$STATE/down-session" "$STATE/download-rate" "$STATE/download-load" "$STATE/download-delay" "$STATE/download-probes" "$STATE/download-backend"
+		return 0
+	fi
 	# Remove only the redirect we installed. A foreign filter on the same
 	# attachment point survives; it also prevents removal of the ingress root.
 	if down_filter_owned; then
@@ -250,11 +270,13 @@ down_cleanup() {
 		ip link del dev "$IFB" || { error 'Could not remove owned IFB interface'; return 1; }
 	fi
 	rm -f "$STATE/down-owner" "$STATE/down-session" "$STATE/down-ifindex" "$STATE/down-alias" "$STATE/down-ingress" \
-		"$STATE/download-rate" "$STATE/download-load" "$STATE/download-delay" "$STATE/download-probes" "$STATE/download-autorate-state"
+		"$STATE/download-rate" "$STATE/download-load" "$STATE/download-delay" "$STATE/download-probes" "$STATE/download-autorate-state" "$STATE/download-backend"
 }
 down_setup() {
 	local token=$1
 	printf '%s\n' "$token" > "$STATE/down-session"
+	printf '%s\n' "${DOWN_BACKEND:-cake}" > "$STATE/download-backend"
+	if [ "${DOWN_BACKEND:-cake}" = hqos ]; then hq_setup "$token"; return $?; fi
 	printf 'c2000max-nrqos-v2\n' > "$STATE/down-owner"
 	ip link add name "$IFB" type ifb || return 1
 	cat "$SYS/class/net/$IFB/ifindex" > "$STATE/down-ifindex" || return 1
@@ -386,7 +408,7 @@ start_queue() {
 	fi
 	printf '%s\n' "$queue_token" > "$STATE/queue-session"
 	if [ "$DOWN_ENABLED" = 1 ]; then
-		printf '%s\n' "$DOWN_RATE" > "$STATE/download-rate"
+		if [ "$DOWN_BACKEND" = hqos ]; then cat "$STATE/hqos/rate"; else printf '%s\n' "$DOWN_RATE"; fi > "$STATE/download-rate"
 		printf '0\n' > "$STATE/download-load"
 		printf '0\n' > "$STATE/download-delay"
 		if [ "$AUTO" = 1 ]; then printf 'starting\n'; else printf 'disabled-fixed-rate\n'; fi > "$STATE/download-probes"
@@ -437,7 +459,7 @@ run_cleanup() {
 	release_session "$RUN_TOKEN"
 }
 stop_all() {
-	local token qtoken n
+	local token qtoken n rc=0
 	lock || { error 'NR QoS is busy'; return 1; }
 	token=$(cat "$STATE/session" 2>/dev/null)
 	qtoken=$(cat "$STATE/queue-session" 2>/dev/null)
@@ -453,7 +475,11 @@ stop_all() {
 		done
 	fi
 	[ -z "$token" ] || release_session "$token" || return 1
-	[ -z "$qtoken" ] || stop_queue "$qtoken"
+	[ -z "$qtoken" ] || stop_queue "$qtoken" || rc=1
+	if [ -f "$STATE/hqos/owner" ]; then
+		command -v hq_cleanup >/dev/null 2>&1 && hq_cleanup "$(cat "$STATE/hqos/owner")" || rc=1
+	fi
+	return "$rc"
 }
 change_rate() {
 	local direction=$1 next=$2
@@ -471,6 +497,7 @@ change_rate() {
 uptime_ms() { awk '{printf "%.0f\n", $1*1000}' "${C2000MAX_NRQOS_UPTIME:-/proc/uptime}"; }
 queue_bytes() {
 	local dev=$IFACE handle=$HANDLE
+	if [ "${1:-upload}" = download ] && [ -f "$STATE/hqos/owner" ]; then hq_bytes; return $?; fi
 	[ "${1:-upload}" != download ] || { dev=$IFB; handle=$DOWN_HANDLE; }
 	tc -s qdisc show dev "$dev" | awk -v h="$handle" '$1=="qdisc" && $2=="cake" && $3==h {on=1;next} /^qdisc / {on=0} on && /Sent / {print $2;exit}'
 }
@@ -530,7 +557,8 @@ run_loop() {
 	while :; do
 		# Short waits allow SIGTERM cleanup even when interval is configured 30s.
 		pause=$INTERVAL
-		while [ "$pause" -gt 0 ]; do sleep 1; pause=$((pause-1)); check_ownership || return 1; done
+		while [ "$pause" -gt 0 ]; do sleep 1; pause=$((pause-1)); done
+		check_ownership || return 1
 		topology && conflicts || return 1
 		[ "$AUTO" != 1 ] || sample
 		now=$(uptime_ms); bytes=$(queue_bytes upload)
@@ -545,6 +573,8 @@ run_loop() {
 	done
 }
 status() {
+	download_backend=cake; [ ! -f "$STATE/hqos/owner" ] || download_backend=hqos
+	configured_backend=$(get download_backend); configured_backend=${configured_backend:-cake}
 	IFACE=$(cat "$STATE/interface" 2>/dev/null); IFACE=${IFACE:-eth2}
 	active=false; owned && active=true
 	down_active=false; down_owned && down_active=true
@@ -564,13 +594,20 @@ status() {
 		--argjson download_load_percent "$down_load" --argjson download_delay_ms "$down_delay" \
 		--arg download_probes "$(cat "$STATE/download-probes" 2>/dev/null)" \
 		--arg error "$(cat "$STATE/error" 2>/dev/null)" \
-		'{api_version:2,enabled:$enabled,active:$active,interface:$interface,upload_kbit:$upload_kbit,autorate:$autorate,load_percent:$load_percent,delay_ms:$delay_ms,probes:$probes,error:$error,download_enabled:$download_enabled,download_active:$download_active,download_kbit:$download_kbit,download_load_percent:$download_load_percent,download_delay_ms:$download_delay_ms,download_probes:$download_probes,direction:(if $download_active then "bidirectional" else "upload" end),scheduler:"cake",hnat_control:"untouched",dataplane_verified:false}'
+		--arg download_backend "$download_backend" --arg configured_download_backend "$configured_backend" \
+		'{api_version:3,enabled:$enabled,active:$active,interface:$interface,upload_kbit:$upload_kbit,autorate:$autorate,load_percent:$load_percent,delay_ms:$delay_ms,probes:$probes,error:$error,download_enabled:$download_enabled,download_active:$download_active,download_kbit:$download_kbit,download_load_percent:$download_load_percent,download_delay_ms:$download_delay_ms,download_probes:$download_probes,direction:(if $download_active then "bidirectional" else "upload" end),scheduler:(if $download_active and $download_backend=="hqos" then "cake-upload+qdma-download" else "cake" end),download_backend:$download_backend,configured_download_backend:$configured_download_backend,eqos_policy:"limiter-priority-exclusive",hnat_control:(if $download_active and $download_backend=="hqos" then "downlink-hqos-only" else "untouched" end),dataplane_verified:false}'
 }
 
-trap 'unlock' EXIT
+[ ! -r "$HQ_LIB" ] || . "$HQ_LIB"
+trap 'unlock; command -v hq_unlock >/dev/null 2>&1 && hq_unlock' EXIT
 case "${1:-status}" in
 	start|reload) start_queue;;
 	stop) stop_all;;
+	yield-to-eqos)
+		[ "${C2000MAX_ACCEL_LOCKS_HELD:-0}" = 1 ] || exit 1
+		stop_all || exit 1
+		error 'Device limiter has priority; NR QoS paused. Disable EQoS and apply NR QoS to resume.' || :
+		;;
 	run) run_loop;;
 	status) status;;
 	*) printf 'Usage: %s {start|stop|reload|run|status}\n' "$0" >&2; exit 2;;

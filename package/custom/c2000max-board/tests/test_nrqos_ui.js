@@ -45,6 +45,17 @@ const ui = new Function('rpc', 'view', 'form', 'poll', 'dom', 'E', '_',
   assert.equal(options.autorate.default, '0');
   assert.equal(options.download_enabled.default, '1');
   assert.equal(options.download_kbit.default, '130000');
+  assert.equal(options.download_backend.default, 'cake');
+  options.download_backend.valueForTest = 'hqos';
+  options.download_enabled.valueForTest = '1';
+  assert.notEqual(options.autorate.validate('main', '1'), true);
+  assert.equal(options.autorate.validate('main', '0'), true);
+  assert.notEqual(options.game_udp_ports.validate('main', '1-65535'), true);
+  assert.equal(options.game_udp_ports.validate('main', '3074'), true);
+  const hardwareRendered = await ui.render({ api_version: 3, enabled: true, active: true, download_enabled: true, download_active: true, download_backend: 'hqos', upload_kbit: 130000, download_kbit: 130000 });
+  assert.match(JSON.stringify(hardwareRendered), /上行 CAKE \+ 下行硬件 HQoS/);
+  assert.match(JSON.stringify(hardwareRendered), /限速插件优先/);
+  options.download_backend.valueForTest = 'cake';
   options.enabled.valueForTest = '1';
   options.autorate.valueForTest = '0';
   options.download_enabled.valueForTest = '1';
