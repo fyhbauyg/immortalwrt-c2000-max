@@ -1,0 +1,21 @@
+From: C2000MAX maintainers
+Subject: [PATCH] net: mediatek: allocate WHNAT flow entries atomically
+
+Backport of MediaTek f789c4f562568768cbde640b6480088bc59cc632:
+https://github.com/mediatek/mtk-openwrt-feeds/commit/f789c4f562568768cbde640b6480088bc59cc632
+
+flow_entry_lock is held with bottom halves disabled. Preserve the existing
+allocation failure/unlock path, but do not sleep and initialize the object.
+This is deliberately limited to the WHNAT admission allocation.
+
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
+@@ -3776,7 +3776,7 @@ static int skb_to_hnat_info(struct sk_buff *skb,
+ 						    skb_hnat_ppe(skb),
+ 						    skb_hnat_entry(skb));
+ 		if (!flow_entry) {
+-			flow_entry = kmalloc(sizeof(*flow_entry), GFP_KERNEL);
++			flow_entry = kzalloc(sizeof(*flow_entry), GFP_ATOMIC);
+ 			if (!flow_entry) {
+ 				spin_unlock_bh(&hnat_priv->flow_entry_lock);
+ 				return -1;
