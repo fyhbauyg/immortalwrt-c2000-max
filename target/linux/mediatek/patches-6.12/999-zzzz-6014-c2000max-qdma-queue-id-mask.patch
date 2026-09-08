@@ -1,0 +1,23 @@
+From: C2000MAX maintainers
+Subject: [PATCH] net: mediatek: bound queue IDs to the configured QDMA count
+
+Adapt MediaTek b0a1258f0fd86ff40f9a4e29ef2ad4950c237f6b:
+https://github.com/mediatek/mtk-openwrt-feeds/commit/b0a1258f0fd86ff40f9a4e29ef2ad4950c237f6b
+
+Apply after MAX's 64-queue extension, not by replacing the upstream eth-26
+patch. The mask describes a queue ID, not a bitmap of all queues. MAX uses
+64 queues (mask 0x3f), while the other configuration uses 16 (mask 0x0f).
+Keep upper mark flags out of queue selection and retain HQoS QIDs 60..63.
+No queue counts, direction bits, shapers or EQoS policies are changed.
+
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -33,7 +33,7 @@
+ #else
+ #define MTK_QDMA_NUM_QUEUES	16
+ #endif
+-#define MTK_QDMA_QUEUE_MASK	GENMASK(15, 0)
++#define MTK_QDMA_QUEUE_MASK	(MTK_QDMA_NUM_QUEUES - 1)
+ #define MTK_QDMA_PAGE_SIZE	2048
+ #define MTK_MAX_RX_LENGTH	1536
+ #define MTK_MAX_RX_LENGTH_UNIT	1024
