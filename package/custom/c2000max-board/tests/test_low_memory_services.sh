@@ -20,8 +20,8 @@ for script in "$DEFAULTS" "$DAED_CLEANUP"; do
 	sh -n "$script" || fail "shell syntax failed: $script"
 done
 
-grep -Fq 'PKG_VERSION:=2.36.5' "$ROOT/Makefile" ||
-	fail 'board package version is not V36.5'
+grep -Fq 'PKG_VERSION:=2.37.1' "$ROOT/Makefile" ||
+	fail 'board package version is not V37.01'
 if grep -Eq '^CONFIG_(DEFAULT_)?(PACKAGE_)?(netbird|luci-app-netbird|luci-i18n-netbird-zh-cn)=y$' "$CONFIG" "$DEFCONFIG"; then
 	fail 'NetBird is still selected in a C2000MAX image configuration'
 fi

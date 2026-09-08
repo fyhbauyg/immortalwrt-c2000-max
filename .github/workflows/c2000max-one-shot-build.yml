@@ -1,9 +1,9 @@
-name: C2000MAX one-shot firmware build
+name: C2000MAX V37.01 one-shot firmware build
 
 on:
   push:
     branches:
-      - v36.5
+      - "37.01"
     paths:
       - ".github/workflows/c2000max-one-shot-build.yml"
       - "configs/c2000max.config"
@@ -23,6 +23,12 @@ on:
       - "target/linux/mediatek/filogic/base-files/**"
       - "scripts/c2000max/**"
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish the 37.01 GitHub Release after a successful build"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   actions: read
@@ -100,7 +106,7 @@ jobs:
           git -C feeds/luci/applications/luci-app-firewall apply \
             "$GITHUB_WORKSPACE/scripts/c2000max/luci-firewall-sonic-fullcone.patch"
           git -C feeds/luci apply \
-            "$GITHUB_WORKSPACE/scripts/c2000max/luci-version-v365.patch"
+            "$GITHUB_WORKSPACE/scripts/c2000max/luci-version-v3701.patch"
           git -C feeds/luci apply \
             "$GITHUB_WORKSPACE/scripts/c2000max/luci-compat-mlo-list-device.patch"
           git -C feeds/luci apply \
@@ -155,6 +161,9 @@ jobs:
           test -n "$manifest"
           test -n "$rootfs"
           bash scripts/c2000max/verify-c2000max-firmware.sh "$manifest" "$rootfs"
+          prepared_kernel="$(find build_dir/target-* -path '*/linux-6.12.*/drivers/net/ethernet/mediatek/mtk_eth_soc.h' -print -quit)"
+          test -n "$prepared_kernel"
+          python3 scripts/c2000max/test_network_backports.py "${prepared_kernel%/drivers/net/ethernet/mediatek/mtk_eth_soc.h}"
           driver_source="$(find build_dir/target-* -path '*/mt_wifi7/mt_wifi/common/fsm/ap_mgmt_assoc.c' -print -quit)"
           test -n "$driver_source"
           bash package/mtk/drivers/mt_wifi7/tests/test_owe_ie.sh "$driver_source"
@@ -168,7 +177,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_name='C2000MAX-V36.5-traffic-management'
+          release_name='C2000MAX-V37.01-hnat-fixes'
           mapfile -d '' sysupgrades < <(
             find c2000max-artifacts -maxdepth 1 -type f \
               -name '*nradio_c2000-max*-sysupgrade.bin' -print0
@@ -199,7 +208,7 @@ jobs:
       - name: Finalize release checksums
         shell: bash
         run: |
-          release_name='C2000MAX-V36.5-traffic-management'
+          release_name='C2000MAX-V37.01-hnat-fixes'
           (
             cd c2000max-artifacts
             find . -maxdepth 1 -type f ! -name c2000max-build-sha256sums.txt \
@@ -217,7 +226,7 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: C2000MAX-V36.5-traffic-management
+          name: C2000MAX-V37.01-hnat-fixes
           path: |
             c2000max-artifacts/
           if-no-files-found: error
@@ -225,12 +234,13 @@ jobs:
           compression-level: 0
 
       - name: Publish GitHub release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_name='C2000MAX-V36.5-traffic-management'
-          release_tag='v36.5'
+          release_name='C2000MAX-V37.01-hnat-fixes'
+          release_tag='37.01'
           source_sha="$GITHUB_SHA"
 
           # Release creation rejects GITHUB_TOKEN when its target modifies
@@ -297,7 +307,7 @@ jobs:
             release_target="$(
               jq -n \
                 --arg message \
-                  "C2000MAX V36.5 release anchor for ${source_sha}" \
+                  "C2000MAX V37.01 release anchor for ${source_sha}" \
                 --arg tree "$release_tree_sha" \
                 --arg parent "$source_sha" \
                 '{ message: $message, tree: $tree, parents: [$parent] }' \
@@ -309,24 +319,25 @@ jobs:
           test -n "$release_target"
 
           cat > release-notes.md <<EOF
-          C2000MAX V36.5 性能与安全改进固件。新镜像需要在 TF 上完成实机验收。
+          C2000MAX V37.01 HNAT 修复固件。新镜像需要在 TF 上完成实机验收，编译通过不代表实机稳定性验证通过。
 
           核心更新：
-          - 修复 MT7993 OWE ECDH IE 跨字段复制告警，保留 FORTIFY 和严格长度检查。
-          - 无线高性能模式完整处理 L1SS、TPO、PST、LP，带状态读回与失败回滚。
-          - C2000MAX 双 PPE 流表改为 16K，减少固定内存分配；减少 USB 根集线器误探测。
-          - 新增默认关闭的 5G NR SQM 预设及加速/设备限速互斥，停止队列后再恢复原选择。
-          - 保留用户自定义 LAN 地址，提供只读 c2000max-netcheck 与 iperf3/ethtool。
-          - 官方 SPI 全部可见分区只读，停用所有一次性切换写入脚本；关机拔 TF 卡启动官方系统。
-          - WAN 和双 WAN 继续使用经过回退处理的软件加速，不恢复已知有问题的 WAN HNAT。
-          - Wi-Fi 吞吐、游戏满载延迟和长期内存稳定性尚需刷入 TF 后实测，不承诺固定提升比例。
+          - HNAT 流表项分配改用适合不可睡眠上下文的清零分配，保留分配失败处理。
+          - 修正 QDMA 队列编号掩码，保留 MAX 现有 HQoS 队列选择与限速逻辑。
+          - 适配 MT7987 非 IP 二层桥接表项绑定修复，仍遵守原有 L2 bridge 开关。
+          - 保留现有 Wi-Fi 主驱动 8.3.1.2，以及 20250613 主驱动/HWIFI/WARP 和 OSAL 543726 配套；未升级 Wi-Fi SDK。
+          - 新版 8.3.1.3 SDK 的三个配套源码包尚未取得，不混搭新旧主驱动、OSAL 或 WARP。
+          - FE 异常中断与 SER 恢复更新延后，待核对 IRQ、DTS 和 MAX 生命周期保护后单独适配。
+          - 保留 MAX Factory 校准、HQoS、MIB 统计、应用审计、单流清理及现有网口/出口管理行为。
+          - 无线吞吐、内网访问延迟及长期稳定性尚需实机对照测试；不承诺性能提升，也不认定已解决网页卡顿根因。
 
           构建来源：
-          - 分支：v36.5
+          - 分支：37.01
           - 提交：${GITHUB_SHA}
           - Actions：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
           Release 至少包含可保留配置升级的 sysupgrade.bin 和完整写卡用的 sdcard.img.gz；校验值见 SHA256SUMS 与 MD5SUMS。
+          发布方式：仅在手动运行 workflow 时显式勾选 publish_release 才发布 GitHub Release；普通 push 只构建并上传 Actions 产物。
           EOF
 
           assets=(
@@ -340,12 +351,12 @@ jobs:
             gh release upload "$release_tag" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" --clobber
             gh release edit "$release_tag" --repo "${GITHUB_REPOSITORY}" \
-              --title 'C2000MAX V36.5 - 性能与安全' \
+              --title 'C2000MAX V37.01 - HNAT 修复' \
               --notes-file release-notes.md
           else
             gh release create "$release_tag" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "$release_target" \
-              --title 'C2000MAX V36.5 - 性能与安全' \
+              --title 'C2000MAX V37.01 - HNAT 修复' \
               --notes-file release-notes.md
           fi
