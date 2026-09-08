@@ -1,0 +1,26 @@
+From: C2000MAX maintainers
+Subject: [PATCH] net: mediatek: identify L2 bridge entries before IP parsing
+
+Backport MediaTek 103eb0e4ef5f749198ad4a82a6ee898b86354e93:
+https://github.com/mediatek/mtk-openwrt-feeds/commit/103eb0e4ef5f749198ad4a82a6ee898b86354e93
+
+Non-IP L2_BRIDGE frames have no IP version to inspect. Honor the existing
+l2br_toggle gate and use Ethernet protocol for these entries. Preserve MAX
+OAF admission, FDB/flooding guards, RXPPD and entry lifecycle protection.
+This does not enable L2 bridge offload by default.
+
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
+@@ -3068,7 +3068,11 @@ static int skb_to_hnat_info(struct sk_buff *skb,
+ 	entry.bfib1.sp = foe->udib1.sp;
+ #endif
+ 
+-	if (ntohs(eth_hdr(skb)->h_proto) == ETH_P_PPP_SES) {
++	if (IS_L2_BRIDGE(&entry)) {
++		if (!l2br_toggle)
++			return -1;
++		h_proto = ntohs(eth_hdr(skb)->h_proto);
++	} else if (ntohs(eth_hdr(skb)->h_proto) == ETH_P_PPP_SES) {
+ 		/* Apply PPPoE Bridge packet info to hw_path for further PPE entry preparing */
+ 		hw_path->flags |= BIT(DEV_PATH_PPPOE);
+ 		hw_path->pppoe_sid = ntohs(pppoe_hdr(skb)->sid);
