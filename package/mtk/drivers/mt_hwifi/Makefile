@@ -7,24 +7,37 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt_hwifi
+PKG_RELEASE:=4
 WIFI_DRIVER_NAME:=mt_wifi7
 P4REV:=
-PKG_SOURCE_DATE:=2025-06-13
-PKG_SOURCE_VERSION:=415824
-PKG_SOURCE:=mt7993_20250613-415824.tar.xz
-PKG_SOURCE_URL:=https://github.com/chasey-dev/objs/releases/download/v1
-PKG_HASH:=e2900a672a5151aed85f6711240db1ddcf5eed317fd620485a0ee6aee060cfb4
-PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(WIFI_DRIVER_NAME)
+# Use the same patched source revision, but never share mutable build stamps
+# with mt_wifi7: package preparation/cleaning would erase the other module.
+PKG_SOURCE_DATE:=2026-07-27
+PKG_SOURCE_VERSION:=765c6bef
+PKG_SOURCE:=c2000max-deco-wifi-765c6bef-source.tar.xz
+PKG_SOURCE_URL:=file://$(TOPDIR)/local-sources
+PKG_HASH:=847e6794beb86713fc9ab08f620e78dca3b537bb1677960937f6ec66a430ccd3
+PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)
+PATCH_DIR:=$(TOPDIR)/package/mtk/drivers/mt_wifi7/patches
+PKG_FILE_DEPENDS:=$(PATCH_DIR)
 PKG_KCONFIG:= \
 	SUPPORT_OPENWRT \
 	CCN34_SPLIT_MAC_SUPPORT \
         CCN67_SPLIT_MAC_SUPPORT \
 
-PKG_CONFIG_DEPENDS:=$(foreach c, $(PKG_KCONFIG),$(if $(CONFIG_MTK_WIFI7_$c),CONFIG_$(c)))
+PKG_CONFIG_DEPENDS:=$(foreach c,$(PKG_KCONFIG),CONFIG_MTK_WIFI7_$(c))
+PKG_CONFIG_DEPENDS+=$(sort $(filter CONFIG_MTK_WIFI7_% CONFIG_MTK_HWIFI_% CONFIG_EN_HWIFI_% CONFIG_PACKAGE_kmod-%,$(.VARIABLES)))
+PKG_CONFIG_DEPENDS+=CONFIG_C2000MAX_DECO_MT76_FW_EXPERIMENTAL
 
 PKG_BUILD_PARALLEL:=1
+PKG_BUILD_DEPENDS:=$(if $(CONFIG_MTK_HWIFI_WED_SUPPORT),warp)
 
 include $(INCLUDE_DIR)/package.mk
+
+# Explicit opt-in only: matching chip and download format are not runtime ABI proof.
+ifeq ($(CONFIG_C2000MAX_DECO_MT76_FW_EXPERIMENTAL),y)
+include ./firmware-experimental.mk
+endif
 
 TAR_CMD=$(HOST_TAR) -C $(1)/ $(TAR_OPTIONS)
 
@@ -426,6 +439,7 @@ define Build/Compile
 		$(MTK_HWIFI_C_FLAGS) \
 	 	KCFLAGS="$(KCFLAGS)" \
 		KBUILD_EXTRA_SYMBOLS="$(wildcard $(PKG_SYMVERS_DIR)/*.symvers)" \
+		MTK_WED="$(KERNEL_BUILD_DIR)/warp" \
 		modules
 endef
 
@@ -587,6 +601,9 @@ endif
 endif
 
 ifeq ($(CONFIG_MTK_HWIFI_MT7993),y)
+ifeq ($(CONFIG_C2000MAX_DECO_MT76_FW_EXPERIMENTAL),y)
+	$(call Install/C2000MAXExperimentalFirmware,$(1))
+else
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/mt7993/rebb/WIFI_MT7993_PATCH_MCU_1_1_hdr.bin $(1)/lib/firmware/WIFI_MT7993_PATCH_MCU_1_1_hdr.bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/mt7993/rebb/WIFI_RAM_CODE_MT7993_1_1.bin $(1)/lib/firmware/WIFI_RAM_CODE_MT7993_1_1.bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/mt7993/rebb/WIFI_RAM_CODE_MT7993_1_1_TESTMODE.bin $(1)/lib/firmware/WIFI_RAM_CODE_MT7993_1_1_TESTMODE.bin
@@ -596,6 +613,7 @@ ifeq ($(CONFIG_MTK_HWIFI_MT7993),y)
 ifeq ($(CONFIG_MTK_WIFI7_FW_CASAN_SUPPORT),y)
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/mt7993/rebb/WIFI_MT7993_PATCH_MCU_1_1_hdr_casan.bin $(1)/lib/firmware/WIFI_MT7993_PATCH_MCU_1_1_hdr.bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/mt7993/rebb/WIFI_RAM_CODE_MT7993_1_1_casan.bin $(1)/lib/firmware/WIFI_RAM_CODE_MT7993_1_1.bin
+endif
 endif
 endif
 

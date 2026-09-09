@@ -1,0 +1,49 @@
+--- a/inc/mt_osal_net.h
++++ b/inc/mt_osal_net.h
+@@ -80,6 +80,8 @@
+ 
+ typedef int (*MT_OS_HARD_START_XMIT_FN)(struct sk_buff *skb, struct net_device *net_dev);
+ 
++/* The caller must hold a reference to the registered net_device. */
++bool mt_os_net_dev_is_osal(void *net_dev);
+ unsigned char mt_os_net_dev_is_up(void *net_dev);
+ unsigned char mt_os_net_dev_is_wds_vlan(void *net_dev);
+ void mt_os_net_dev_set_priv(void *net_dev, void *priv);
+--- a/mt_osal_net.c
++++ b/mt_osal_net.c
+@@ -246,6 +246,20 @@
+ 	return pStats;
+ }
+ 
++bool mt_os_net_dev_is_osal(void *net_dev)
++{
++	struct net_device *dev = net_dev;
++	const struct net_device_ops *ops;
++
++	if (!dev)
++		return false;
++
++	/* Check registration provenance before accessing the private allocation. */
++	ops = dev->netdev_ops;
++	return ops && ops->ndo_get_stats == mt_os_net_dev_get_ether_stats &&
++		ops->ndo_do_ioctl == mt_os_wifi_ioctl;
++}
++
+ unsigned char mt_os_net_dev_is_up(void *net_dev)
+ {
+ 	struct net_device *dev = (struct net_device *)net_dev;
+--- a/mt_osal_genl.c
++++ b/mt_osal_genl.c
+@@ -109,6 +109,12 @@
+ 		return -EFAULT;
+ 	}
+ 
++	if (!mt_os_net_dev_is_osal(dev)) {
++		MT_DEBUG_ERROR("genl_rev ra0 is not an OSAL net_dev\n");
++		ret = -ENODEV;
++		goto out_put;
++	}
++
+ 	net_priv_info = (struct mt_net_dev_priv *)netdev_priv((struct net_device *)dev);
+ 	if (!net_priv_info) {
+ 		MT_DEBUG_ERROR("!net_priv_info\n");

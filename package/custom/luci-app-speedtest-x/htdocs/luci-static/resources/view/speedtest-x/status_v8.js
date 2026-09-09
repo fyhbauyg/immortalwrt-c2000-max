@@ -29,7 +29,9 @@ function parseServiceStatus(result) {
 }
 
 function serviceAction(action) {
-	return fs.exec('/usr/libexec/speedtest-x/service-control', [ action ]).then(function() {
+	return fs.exec('/usr/libexec/speedtest-x/service-control', [ action ]).then(function(result) {
+		if (result.code !== 0)
+			throw new Error(result.stderr || '服务操作失败，请检查服务日志。');
 		ui.addNotification(null, E('p', {}, '服务操作已完成。'), 'info');
 		window.setTimeout(function() { window.location.reload(); }, 1500);
 	}).catch(function(error) {
@@ -40,7 +42,7 @@ function serviceAction(action) {
 function webURL(listen) {
 	var match = String(listen || '').match(/:(\d+)$/);
 	var port = match ? match[1] : '9001';
-	return window.location.protocol + '//' + window.location.hostname + ':' + port + '/';
+	return 'http://' + window.location.hostname + ':' + port + '/';
 }
 
 return view.extend({
@@ -59,7 +61,7 @@ return view.extend({
 		var url = webURL(listen);
 		var stateLabel = service.running ? '运行中' : (service.enabled ? '已启用，但服务未运行' : '已停止');
 		var map = new form.Map('speedtestx', '内网测速（Speedtest-X）',
-			'使用单个轻量 Go 服务测试终端与 C2000-MAX 之间的下载、上传、延迟和抖动。结果仅供参考：此测速链路不经过路由器网络加速，速度可能与实际转发或上网速度存在差异。服务默认关闭，也不会开放 WAN 防火墙端口。');
+			'使用流式下载和服务端确认上传字节测量实际应用层吞吐，不加速率补偿。测速页面可选择固定时长和单连接／多连接；HTTP 延迟包含本机服务处理时间，不等同于 ICMP 延迟。测速终点是路由器本机，不代表 HNAT 转发上限。服务默认关闭，不新增 WAN 放行规则。测速服务使用 HTTP，请仅在可信内网使用。');
 
 		map.on_after_commit = function() {
 			var enabled = uci.get('speedtestx', 'main', 'enabled') === '1';
@@ -80,10 +82,12 @@ return view.extend({
 		var chunk = section.option(form.Value, 'max_download_mb', '单次下载块上限（MiB）');
 		chunk.datatype = 'range(1,1024)';
 		chunk.placeholder = '50';
+		chunk.description = '服务端每个下载响应的大小上限，不是速率限制；页面最多请求 50 MiB，并流式读取。通常无需调大。';
 
-		var clients = section.option(form.Value, 'max_clients', '并发测速流上限');
+		var clients = section.option(form.Value, 'max_clients', '服务端并发请求上限');
 		clients.datatype = 'range(12,128)';
 		clients.placeholder = '24';
+		clients.description = '所有客户端合计的请求上限，不是单次测速连接数。连接数请在测速页面选择；超过此上限会明确报错。';
 
 		var history = section.option(form.Value, 'history_limit', '内存测速记录数');
 		history.datatype = 'range(0,1000)';

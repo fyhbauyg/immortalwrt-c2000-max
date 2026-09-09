@@ -1,6 +1,6 @@
 --- a/mt_wifi/common/fsm/ap_mgmt_assoc.c
 +++ b/mt_wifi/common/fsm/ap_mgmt_assoc.c
-@@ -1570,6 +1570,10 @@
+@@ -1577,6 +1577,10 @@
  			/*parse EXTENSION EID*/
  			UCHAR *extension_id = (UCHAR *)eid_ptr + 2;
  
@@ -11,7 +11,7 @@
  #ifdef DOT11_EHT_BE
  			if (eht_get_ies((UINT8 *)eid_ptr, &ie_lists->cmm_ies, &frag_info) < 0)
  				return FALSE;
-@@ -1579,15 +1583,16 @@
+@@ -1586,15 +1590,16 @@
  			case EID_EXT_ECDH:
  #if defined(CONFIG_OWE_SUPPORT) || defined(HOSTAPD_OWE_SUPPORT)
  			{

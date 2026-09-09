@@ -208,7 +208,6 @@ int fmt_and_bw_attr_put(struct nl_msg *msg, char *value)
 	return 0;
 }
 
-
 int burst_period_attr_put(struct nl_msg *msg, char *value)
 {
 	unsigned int burst_period;
@@ -345,23 +344,64 @@ int delay_time_attr_put(struct nl_msg *msg, char *value)
 	return 0;
 }
 
-int ntb_ranging_attr_put(struct nl_msg *msg, char *value)
+int az_fmt_and_bw_attr_put(struct nl_msg *msg, char *value)
 {
+	unsigned char fmt_and_bw;
+
 	if (!value)
 		return -EINVAL;
 
-	if (nla_put_string(msg, MTK_NL80211_VENDOR_ATTR_FTM_NTB_RANGING_PARAMS, value))
+	fmt_and_bw = strtoul(value, NULL, 10);
+
+	if (fmt_and_bw > 63)
+		return -EINVAL;
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_FTM_AZ_FMT_AND_BW, fmt_and_bw))
 		return -EMSGSIZE;
 
 	return 0;
 }
 
-int ntb_meas_time_attr_put(struct nl_msg *msg, char *value)
+int az_fdbk_attr_put(struct nl_msg *msg, char *value)
 {
 	if (!value)
 		return -EINVAL;
 
-	if (nla_put_string(msg, MTK_NL80211_VENDOR_ATTR_FTM_NTB_MEAS_EXP, value))
+	if (nla_put_string(msg, MTK_NL80211_VENDOR_ATTR_FTM_AZ_FDBK_PARAMS, value))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+
+int az_stream_attr_put(struct nl_msg *msg, char *value)
+{
+	if (!value)
+		return -EINVAL;
+
+	if (nla_put_string(msg, MTK_NL80211_VENDOR_ATTR_FTM_AZ_MAX_STREAM, value))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+int az_ltf_attr_put(struct nl_msg *msg, char *value)
+{
+	if (!value)
+		return -EINVAL;
+
+	if (nla_put_string(msg, MTK_NL80211_VENDOR_ATTR_FTM_AZ_MAX_LTF, value))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+int az_meas_time_attr_put(struct nl_msg *msg, char *value)
+{
+	if (!value)
+		return -EINVAL;
+
+	if (nla_put_string(msg, MTK_NL80211_VENDOR_ATTR_FTM_AZ_MEAS_EXP, value))
 		return -EMSGSIZE;
 
 	return 0;
@@ -381,8 +421,22 @@ int ntb_req_attr_put(struct nl_msg *msg, char *value)
 	else
 		return -EINVAL;
 
-
 	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_FTM_NTB_RANG_REQ, range_req))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+int az_ndp_attr_put(struct nl_msg *msg, char *value)
+{
+	unsigned char ndp;
+
+	if (!value)
+		return -EINVAL;
+
+	ndp = strtoul(value, NULL, 10);
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_FTM_AZ_NDP, ndp))
 		return -EMSGSIZE;
 
 	return 0;
@@ -407,9 +461,13 @@ struct ftm_option ftm_opt[] = {
 	{"test_mode", test_mode_attr_put},
 	{"burst_timeout", burst_timeout_attr_put},
 	{"delay_time", delay_time_attr_put},
-	{"ntb_ranging", ntb_ranging_attr_put},
-	{"ntb_meas_time", ntb_meas_time_attr_put},
+	{"az_fmt_bw", az_fmt_and_bw_attr_put},
+	{"az_fdbk", az_fdbk_attr_put},
+	{"az_stream", az_stream_attr_put},
+	{"az_ltf", az_ltf_attr_put},
+	{"az_meas_time", az_meas_time_attr_put},
 	{"ntb_req", ntb_req_attr_put},
+	{"az_ndp", az_ndp_attr_put}
 };
 
 
@@ -478,8 +536,12 @@ COMMAND(set, ftm,
 	"[burst_period=<val:0-65535>][target=<mac_addr>]\n"
 	"[toae=<bias>-<ant>-<speFtm>-<speFtmAck>-<chain>]\n"
 	"[test_mode=<1>][burst_timeout=<val:0-65535>]\n"
-	"[ntb_ranging=<I2rLmrFdbk>:<ImmR2IFdbk>:<ImmI2RFdbk>:<MaxR2iRep>:<MaxI2rRep>:<MaxR2iLtf>:<MaxI2rLtf>]\n"
-	"[ntb_meas_time=<min_exp>:<max_exp>][ntb_req=<val:0-disable, 1-enable>]",
+	"[az_fmt_bw=<val:0-HE20, 1-HE40, 2-HE80, 5-HE160>]\n"
+	"[az_fdbk=<I2rLmrFdbk>:<ImmR2IFdbk>:<ImmI2RFdbk>]\n"
+	"[az_stream=<R2iMin80>:<R2iMax80>:<I2rMin80>:<I2rMax80>]\n"
+	"[az_ltf=<MaxR2iLtf>:<MaxI2rLtf>][az_meas_time=<min_exp>:<max_exp>]\n"
+	"[az_ndp=<val:0~255>]\n"
+	"[ntb_req=<val:0-disable, 1-enable>]",
 	MTK_NL80211_VENDOR_SUBCMD_FTM, 0, CIB_NETDEV, handle_ftm_set,
 	"This command is used to set FTM (Fine Time Measurement) parameters");
 

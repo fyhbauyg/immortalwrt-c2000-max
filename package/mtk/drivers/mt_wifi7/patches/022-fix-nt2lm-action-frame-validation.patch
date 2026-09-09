@@ -1,0 +1,359 @@
+From: C2000MAX local driver maintenance
+Subject: [PATCH 022] Validate NT2LM action frames and accept default mapping
+
+Pass actual received length into the AP/STA NT2LM receive path and reuse
+the bounded format parser from patch 021. Keep the existing bidirectional,
+complete-contract policy. Validate on a candidate before replacing live maps,
+and normalize default maps to established links. Do not add token matching,
+pending-request state, scheduled or partial-TID negotiation in this patch.
+
+Preserve all eight TX maps, fix the IE payload length and presence bitmap,
+and encode link maps and response status with the proper little-endian width.
+
+diff --git a/mt_wifi/common/action.c b/mt_wifi/common/action.c
+index bbcc540..38b362a 100644
+--- a/mt_wifi/common/action.c
++++ b/mt_wifi/common/action.c
+@@ -1996,13 +1996,19 @@ static void eht_peer_mld_link_reconfig_action(
+ 
+ VOID PeerProtectEHTAction(PRTMP_ADAPTER pAd, MLME_QUEUE_ELEM *Elem)
+ {
+-	struct eht_prot_action_frame *eht_prot_act = (struct eht_prot_action_frame *)Elem->Msg;
+-	UINT8 Action = eht_prot_act->prot_eht_action, *pos;
+-	struct wifi_dev *wdev = Elem->wdev;
++	struct eht_prot_action_frame *eht_prot_act;
++	UINT8 Action, *pos;
++	struct wifi_dev *wdev;
+ 	MAC_TABLE_ENTRY *pEntry = NULL;
+ 	struct mld_entry_t *mld_entry = NULL;
+ 	uint16_t mld_sta_idx, mld_link_num;
+ 
++	if (!Elem || Elem->MsgLen < sizeof(struct eht_prot_action_frame))
++		return;
++	eht_prot_act = (struct eht_prot_action_frame *)Elem->Msg;
++	Action = eht_prot_act->prot_eht_action;
++	wdev = Elem->wdev;
++
+ 	if (!VALID_UCAST_ENTRY_WCID(pAd, Elem->Wcid) || !wdev)
+ 		return;
+ 
+diff --git a/mt_wifi/feature/t2lm/t2lm.c b/mt_wifi/feature/t2lm/t2lm.c
+index 9756348..aa749f3 100644
+--- a/mt_wifi/feature/t2lm/t2lm.c
++++ b/mt_wifi/feature/t2lm/t2lm.c
+@@ -2926,49 +2926,58 @@ err:
+  * @convert t2m ie link mapping to driver tid_map
+  *
+  * @param *t2lm_ie t2lm ie
++ * @param ie_buf_len received IE sequence length, not backing buffer capacity
+  * @param *tid_map tid map of each link
+  * @param *dir direction
+  */
+ int nt2lm_t2lm_ie_link_map_to_tid_map(
+ 	IN u8 *t2lm_ie,
++	IN ULONG ie_buf_len,
+ 	OUT u8 *tid_map,
+ 	OUT u8 *dir
+ )
+ {
+-	int ret = 0;
+-	PEID_STRUCT eid = (PEID_STRUCT)(t2lm_ie);
+-	struct t2lm_ctrl_t t2lm_ctrl = {0};
+-	u16 link_map = 0;
+-	u8 tid, link_id, mld_link_max;
++	int ret = -EINVAL;
++	struct tid2lnk_ie_info parsed = {0};
++	u8 *ttlm = NULL;
++	ULONG offset = 0, ie_len;
+ 
+-	if (eid->Eid != IE_WLAN_EXTENSION ||
+-		eid->Octet[0] != EID_EXT_EHT_TID2LNK_MAP) {
+-		ret = -EINVAL;
++	if (!t2lm_ie || !tid_map || !dir)
+ 		goto err;
+-	}
+-
+-	NdisMoveMemory(&t2lm_ctrl, &eid->Octet[1], sizeof(struct t2lm_ctrl_t));
+-	*dir = t2lm_ctrl.dir;
+-	for (link_id = 0; link_id < MLD_LINK_MAX; link_id++)
+-		tid_map[link_id] = 0;
+ 
+-	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_T2LM, DBG_LVL_INFO,
+-		 "t2lm_ctrl=0x%x\n", *((u16 *)&t2lm_ctrl));
+-
+-	for (tid = 0 ; tid < TID_MAX; tid++) {
+-		if (t2lm_ctrl.link_map_sz == 0) { /*2 octets*/
+-			mld_link_max = MLD_LINK_MAX;
+-			NdisMoveMemory(&link_map, &eid->Octet[3 + tid * 2], 2);
+-			link_map = cpu_to_le16(link_map);
+-		} else { /*1 octet*/
+-			mld_link_max = MLD_LINK_MAX / 2;
+-			NdisMoveMemory(&link_map, &eid->Octet[3 + tid * 1], 1);
++	/* Validate the entire received sequence before using the shared parser.
++	 * This implementation supports one complete, bidirectional contract;
++	 * accepting just the first of conflicting TTLM IEs would change policy.
++	 */
++	while (offset < ie_buf_len) {
++		if (ie_buf_len - offset < 2)
++			goto err;
++		ie_len = (ULONG)t2lm_ie[offset + 1] + 2;
++		if (ie_len > ie_buf_len - offset)
++			goto err;
++		if (t2lm_ie[offset] == IE_WLAN_EXTENSION) {
++			if (ie_len < 3)
++				goto err;
++			if (t2lm_ie[offset + 2] == EID_EXT_EHT_TID2LNK_MAP) {
++				if (ttlm)
++					goto err;
++				ttlm = &t2lm_ie[offset];
++			}
+ 		}
+-		for (link_id = 0; link_id < mld_link_max; link_id++)
+-			tid_map[link_id] |= ((link_map & (1 << link_id)) >> link_id) << tid;
++		offset += ie_len;
+ 	}
++	if (!ttlm || parse_tid_to_link_map_ie(ttlm, &parsed) < 0)
++		goto err;
++	/* Default mapping is one control octet, with no presence or map fields.
++	 * Scheduled/temporary and partial-TID negotiation remain unsupported.
++	 */
++	if (parsed.ctrl_dir != T2LM_BI || parsed.ctrl_mst || parsed.ctrl_ed ||
++		(!parsed.ctrl_default && parsed.ctrl_map_pres != 0xff))
++		goto err;
+ 
+-	return ret;
++	NdisMoveMemory(tid_map, parsed.tid_map, sizeof(parsed.tid_map));
++	*dir = parsed.ctrl_dir;
++	return 0;
+ err:
+ 	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_T2LM, DBG_LVL_ERROR,
+ 		 "err=%d\n", ret);
+@@ -3239,17 +3248,21 @@ int nt2lm_peer_mld_tid_sanity_check(
+ 	IN struct wifi_dev *wdev,
+ 	IN u16 wcid,
+ 	IN struct eht_prot_action_frame *eht_prot_act,
++	IN ULONG rx_frame_len,
+ 	OUT u8 *dialog_token
+ )
+ {
+ 	int ret = 0;
+-	u8 dir = 0;
++	u8 tid, link_id;
+ 	struct nt2lm_contract_t *nt2lm_contract = NULL;
++	struct nt2lm_contract_t candidate;
+ 
+-	if (!wdev || !eht_prot_act || !dialog_token) {
++	if (!ad || !wdev || !eht_prot_act || !dialog_token ||
++		rx_frame_len < sizeof(*eht_prot_act) + 1) {
+ 		ret = -EINVAL;
+ 		goto err;
+ 	}
++	*dialog_token = eht_prot_act->data[0];
+ 
+ 	if (wdev->wdev_type == WDEV_TYPE_AP) {
+ 		struct bmgr_mld_sta *mld_sta = NULL;
+@@ -3284,31 +3297,44 @@ int nt2lm_peer_mld_tid_sanity_check(
+ 		goto err;
+ 	}
+ 
+-	/* get t2lm ie link map and assign to nt2lm_contract with tid map */
+-	nt2lm_t2lm_ie_link_map_to_tid_map(&eht_prot_act->data[1],
+-		nt2lm_contract->tid_map,
+-		&dir);
+-	nt2lm_contract->dir = dir;
++	/* Parsing and policy validation must not partially replace a live mapping. */
++	candidate = *nt2lm_contract;
++	candidate.link_id_bitmap = 0;
++	NdisZeroMemory(candidate.link_id_to_wcid, sizeof(candidate.link_id_to_wcid));
++	NdisZeroMemory(candidate.tid_map_dl, sizeof(candidate.tid_map_dl));
++	NdisZeroMemory(candidate.tid_map_ul, sizeof(candidate.tid_map_ul));
++	ret = nt2lm_t2lm_ie_link_map_to_tid_map(&eht_prot_act->data[1],
++		rx_frame_len - sizeof(*eht_prot_act) - 1,
++		candidate.tid_map, &candidate.dir);
++	if (ret)
++		goto err;
+ 	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_T2LM, DBG_LVL_INFO,
+ 		 "dir=%d, tid_map=0x%.2x,0x%.2x,0x%.2x\n",
+-		 dir,
+-		 nt2lm_contract->tid_map[0],
+-		 nt2lm_contract->tid_map[1],
+-		 nt2lm_contract->tid_map[2]);
+-
+-	if (dir != T2LM_BI) {
+-		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_T2LM, DBG_LVL_NOTICE,
+-			 "dir!=T2LM_BI dir=%d\n", dir);
+-		ret = -EINVAL;
+-		goto err;
+-	}
+-
+-	*dialog_token = eht_prot_act->data[0];
++		 candidate.dir,
++		 candidate.tid_map[0],
++		 candidate.tid_map[1],
++		 candidate.tid_map[2]);
+ 
+ 	ret = nt2lm_request_sanity_check(ad,
+ 		wdev,
+ 		wcid,
+-		nt2lm_contract);
++		&candidate);
++	if (ret)
++		goto err;
++
++	/* Default mapping means all established links, not all 16 possible IDs.
++	 * Keep both representations limited to links accepted by contract sanity.
++	 */
++	for (link_id = 0; link_id < MLD_LINK_MAX; link_id++)
++		if (!(candidate.link_id_bitmap & (1 << link_id)))
++			candidate.tid_map[link_id] = 0;
++	candidate.tid_bit_map = 0xff;
++	NdisZeroMemory(candidate.link_map, sizeof(candidate.link_map));
++	for (tid = 0; tid < TID_MAX; tid++)
++		for (link_id = 0; link_id < MLD_LINK_MAX; link_id++)
++			if (candidate.tid_map[link_id] & (1 << tid))
++				candidate.link_map[tid] |= (1 << link_id);
++	*nt2lm_contract = candidate;
+ 
+ 	return ret;
+ err:
+@@ -3808,7 +3834,8 @@ int nt2lm_peer_t2lm_request_action(
+ 	IN PRTMP_ADAPTER ad,
+ 	IN struct wifi_dev *wdev,
+ 	IN u16 wcid,
+-	IN struct eht_prot_action_frame *eht_prot_act
++	IN struct eht_prot_action_frame *eht_prot_act,
++	IN ULONG rx_frame_len
+ )
+ {
+ 	int ret = 0;
+@@ -3822,7 +3849,7 @@ int nt2lm_peer_t2lm_request_action(
+ 	struct nt2lm_req_arg_t *callback_arg = NULL;
+ 
+ 	if (nt2lm_peer_mld_tid_sanity_check(ad, wdev, wcid,
+-		eht_prot_act, &dialog_token))
++		eht_prot_act, rx_frame_len, &dialog_token))
+ 		status_code = MLME_DENIED_TID_TO_LINK_MAPPING;
+ 
+ 	if (wdev->wdev_type == WDEV_TYPE_AP) {
+@@ -3944,15 +3971,18 @@ int nt2lm_peer_t2lm_rsp_sanity_check(
+ 	IN struct wifi_dev *wdev,
+ 	IN u16 wcid,
+ 	IN struct eht_prot_action_frame *eht_prot_act,
+-	OUT u8 *status
++	IN ULONG rx_frame_len,
++	OUT u16 *status
+ )
+ {
+ 	int ret = 0;
+ 	//u8 token; /*todo*/
+ 
+-	if (!eht_prot_act)
++	if (!eht_prot_act || !status ||
++		rx_frame_len < sizeof(*eht_prot_act) + 3)
+ 		return -1;
+-	*status = eht_prot_act->data[1];
++	*status = (u16)eht_prot_act->data[1] |
++		((u16)eht_prot_act->data[2] << 8);
+ 	return ret;
+ }
+ #ifdef WAPP_SUPPORT
+@@ -4004,16 +4034,18 @@ int nt2lm_peer_t2lm_response_action(
+ 	IN PRTMP_ADAPTER ad,
+ 	IN struct wifi_dev *wdev,
+ 	IN u16 wcid,
+-	IN struct eht_prot_action_frame *eht_prot_act
++	IN struct eht_prot_action_frame *eht_prot_act,
++	IN ULONG rx_frame_len
+ )
+ {
+ 	int ret = 0;
+-	u8 status = 0;
++	u16 status = 0;
+ 	struct bmgr_mld_sta *mld_sta = NULL;
+ 	struct bmgr_mlo_dev *mld = NULL;
+ 	struct nt2lm_contract_t *nt2lm_contract = NULL;
+ 
+-	if (nt2lm_peer_t2lm_rsp_sanity_check(ad, wdev, wcid, eht_prot_act, &status)) {
++	if (nt2lm_peer_t2lm_rsp_sanity_check(ad, wdev, wcid,
++		eht_prot_act, rx_frame_len, &status)) {
+ 		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_T2LM, DBG_LVL_ERROR,
+ 			"t2lm rsp sanity check fail\n");
+ 		return -1;
+@@ -4215,6 +4247,8 @@ int nt2lm_t2lm_request(
+ 	UCHAR eid = IE_WLAN_EXTENSION;
+ 	UCHAR length = 0;
+ 	UCHAR eid_ext = EID_EXT_EHT_TID2LNK_MAP;
++	u8 link_map_le[TID_MAX * 2];
++	u8 tid;
+ 
+ 	peer_entry = entry_get(ad, wcid);
+ 	if (!IS_VALID_ENTRY(peer_entry) || !wdev) {
+@@ -4268,9 +4302,17 @@ int nt2lm_t2lm_request(
+ 	n2tlm_req.category = CATEGORY_PROTECTED_EHT;
+ 	n2tlm_req.prot_eht_action = EHT_PROT_ACT_T2LM_REQUEST;
+ 
+-	t2lm_ctrl.link_map_ind = nt2lm_contract->tid_bit_map;
++	/* The existing contract/sanity path describes all eight TIDs. Emit all
++	 * eight maps, including when the initiating command had a sparse mask.
++	 * IE Length excludes the element ID and Length octets themselves.
++	 */
++	t2lm_ctrl.link_map_ind = 0xff;
+ 	t2lm_ctrl.dir = nt2lm_contract->dir;
+-	length = 3 + sizeof(struct t2lm_ctrl_t) + sizeof(u16) * TID_MAX;
++	for (tid = 0; tid < TID_MAX; tid++) {
++		link_map_le[tid * 2] = nt2lm_contract->link_map[tid] & 0xff;
++		link_map_le[tid * 2 + 1] = nt2lm_contract->link_map[tid] >> 8;
++	}
++	length = 1 + sizeof(struct t2lm_ctrl_t) + sizeof(link_map_le);
+ 	MakeOutgoingFrame(out_buffer, &frame_len,
+ 		sizeof(struct eht_prot_action_frame), &n2tlm_req,
+ 		1, &dialog_token,
+@@ -4278,7 +4320,7 @@ int nt2lm_t2lm_request(
+ 		1, &length,
+ 		1, &eid_ext,
+ 		sizeof(struct t2lm_ctrl_t), &t2lm_ctrl,
+-		(sizeof(u16) * TID_MAX), nt2lm_contract->link_map,
++		sizeof(link_map_le), link_map_le,
+ 		END_OF_ARGS);
+ 	hex_dump_with_cat_and_lvl("NT2LM_REQ:",
+ 		out_buffer, frame_len,
+@@ -4474,17 +4516,33 @@ void nt2lm_peer_t2lm_req_action(
+ 	IN MLME_QUEUE_ELEM * Elem
+ )
+ {
+-	struct eht_prot_action_frame *eht_prot_act = (struct eht_prot_action_frame *)Elem->Msg;
+-	u8 action = eht_prot_act->prot_eht_action;
+-	struct wifi_dev *wdev = Elem->wdev;
+-	u16 wcid = Elem->Wcid;
++	struct eht_prot_action_frame *eht_prot_act;
++	u8 action;
++	struct wifi_dev *wdev;
++	u16 wcid;
++
++	if (!Elem || Elem->MsgLen < sizeof(*eht_prot_act))
++		return;
++	eht_prot_act = (struct eht_prot_action_frame *)Elem->Msg;
++	action = eht_prot_act->prot_eht_action;
++	wdev = Elem->wdev;
++	wcid = Elem->Wcid;
++	if (!ad || !wdev || !VALID_UCAST_ENTRY_WCID(ad, wcid))
++		return;
+ 
+ 	switch (action) {
+ 	case EHT_PROT_ACT_T2LM_REQUEST:
+-		nt2lm_peer_t2lm_request_action(ad, wdev, wcid, eht_prot_act);
++		/* Dialog token plus the smallest (default) TTLM IE. */
++		if (Elem->MsgLen < sizeof(*eht_prot_act) + 5)
++			return;
++		nt2lm_peer_t2lm_request_action(ad, wdev, wcid,
++			eht_prot_act, Elem->MsgLen);
+ 		break;
+ 	case EHT_PROT_ACT_T2LM_RESPONSE:
+-		nt2lm_peer_t2lm_response_action(ad, wdev, wcid, eht_prot_act);
++		if (Elem->MsgLen < sizeof(*eht_prot_act) + 3)
++			return;
++		nt2lm_peer_t2lm_response_action(ad, wdev, wcid,
++			eht_prot_act, Elem->MsgLen);
+ 		break;
+ 	case EHT_PROT_ACT_T2LM_TEARDOWN:
+ 		nt2lm_peer_t2lm_teardown_action(ad, wdev, wcid, eht_prot_act);

@@ -1,0 +1,301 @@
+--- a/regs/reg_v3_1/warp_mt7987.c
++++ b/regs/reg_v3_1/warp_mt7987.c
+@@ -5,6 +5,7 @@
+ #include <warp_hw.h>
+ #include <linux/proc_fs.h>
+ #include <linux/pci.h>
++#include <linux/rcupdate.h>
+ #include "wed_hw.h"
+ 
+ void
+@@ -145,15 +146,27 @@
+ warp_get_wdma_port(struct wdma_entry *wdma, u8 idx)
+ {
+ 	int rx_port, tx_port;
++	typeof(hnat_get_wdma_rx_port) get_rx_port;
++	typeof(hnat_get_wdma_tx_port) get_tx_port;
+ 
+-	rx_port = hnat_get_wdma_rx_port(idx);
++	/* Legacy providers can retire these callbacks after an RCU grace period. */
++	rcu_read_lock();
++	get_rx_port = READ_ONCE(hnat_get_wdma_rx_port);
++	get_tx_port = READ_ONCE(hnat_get_wdma_tx_port);
++	if (!get_rx_port || !get_tx_port) {
++		rcu_read_unlock();
++		return -ENODEV;
++	}
++	rx_port = get_rx_port(idx);
+ 	if (rx_port < 0) {
++		rcu_read_unlock();
+ 		warp_dbg(WARP_DBG_ERR, "%s(): wdma_idx = %u, rx_port err = %d\n",
+ 			__func__, idx, rx_port);
+ 		return rx_port;
+ 	}
+ 
+-	tx_port = hnat_get_wdma_tx_port(idx);
++	tx_port = get_tx_port(idx);
++	rcu_read_unlock();
+ 	if (tx_port < 0) {
+ 		warp_dbg(WARP_DBG_ERR, "%s(): wdma_idx = %u, tx_port err = %d\n",
+ 			__func__, idx, tx_port);
+--- a/warp_main.c
++++ b/warp_main.c
+@@ -385,6 +385,7 @@
+ static int
+ warp_probe(struct platform_device *pdev)
+ {
++	int ret;
+ #ifdef WED_RX_HW_RRO_2_0
+ 	u32 i, heart_beat = 0;
+ #endif
+@@ -413,8 +414,9 @@
+ 	wifi = &warp->wifi;
+ 	hw = &wifi->hw;
+ 
+-	if (warp_set_dma_mask(pdev, hw))
+-		return -1;
++	ret = warp_set_dma_mask(pdev, hw);
++	if (ret)
++		goto err_pdev;
+ 
+ 	/*build sw base cr mirror mapping */
+ 	warp_mtable_build_hw(warp);
+@@ -422,16 +424,21 @@
+ 	wed = &warp->wed;
+ 	wed->warp = warp;
+ 	wed->sw_conf = &warp->sw_conf;
+-	wed_init(pdev, warp->idx, wed);
+-	wed_entry_proc_init(warp, wed);
+-#ifdef WED_RX_D_SUPPORT
+-	rxbm_proc_init(warp, wed);
+-#endif
++	ret = wed_init(pdev, warp->idx, wed);
++	if (ret)
++		goto err_pdev;
+ 	/*initial wdma entry*/
+ 	wdma = &warp->wdma;
+ 	wdma->warp = warp;
+ 	wdma->sw_conf = &warp->sw_conf;
+-	wdma_init(pdev, warp->idx, wdma, wed->ver);
++	ret = wdma_init(pdev, warp->idx, wdma, wed->ver);
++	if (ret)
++		goto err_wed;
++	/* Publish resource views only after both engines initialized. */
++	wed_entry_proc_init(warp, wed);
++#ifdef WED_RX_D_SUPPORT
++	rxbm_proc_init(warp, wed);
++#endif
+ 	wdma_entry_proc_init(warp, wdma);
+ #ifdef WED_INTER_AGENT_SUPPORT
+ 	/*request irq*/
+@@ -468,6 +475,16 @@
+ 
+ 	warp_dbg(WARP_DBG_INF, "%s(): platform device probe is done\n", __func__);
+ 	return 0;
++
++err_wed:
++	/* No resource proc entries, WDMA rings, IRQ, or wifi setup exist yet. */
++	wed_exit(pdev, wed);
++err_pdev:
++#ifdef WED_RX_HW_RRO_2_0
++	warp_msg_deinit(warp->idx);
++#endif
++	warp_entry_release_pdev(warp);
++	return ret;
+ }
+ 
+ 
+@@ -1075,16 +1092,29 @@
+ 	int ret = 0;
+ 	struct warp_ctrl *warp_ctrl = warp_ctrl_get();
+ 	struct platform_driver *pdriver;
+-	struct wifi_entry *wifi = to_wifi_entry(hw);
+-	struct warp_entry *warp = to_warp_entry(wifi);
++	struct wifi_entry *wifi;
++	struct warp_entry *warp;
+ 	static char name[MAX_NAME_SIZE] = "";
+ 
++	if (!hw || !ops)
++		return -1;
++	wifi = to_wifi_entry(hw);
++	warp = to_warp_entry(wifi);
+ 	if (!warp) {
+ 		warp_dbg(WARP_DBG_OFF,
+ 			 "%s(): can't acquire a new warp entry since full! priv_data: %p\n", __func__,
+ 			 wifi->hw.priv);
+ 		goto err;
+ 	}
++#ifdef CONFIG_WARP_V3_1
++	/* Fail before proc/ref/platform resources if the provider is unavailable. */
++	ret = warp_get_wdma_port(&warp->wdma, warp->idx);
++	if (ret) {
++		warp_dbg(WARP_DBG_ERR, "%s(): WDMA port provider unavailable: %d\n",
++			__func__, ret);
++		goto err_release;
++	}
++#endif
+ 	/*assign wifi ops*/
+ 	wifi->ops = ops;
+ 	/*assign & create a pdriver*/
+@@ -1092,7 +1122,7 @@
+ 			warp_ctrl->warp_driver_idx++);
+ 
+ 	if (ret < 0)
+-		goto err;
++		goto err_release;
+ 
+ 	pdriver = &warp->pdriver;
+ 	pdriver->probe = warp_probe;
+@@ -1100,11 +1130,23 @@
+ 	pdriver->driver.name = name;
+ 	pdriver->driver.owner = THIS_MODULE;
+ 	pdriver->driver.of_match_table = warp_of_ids[warp->idx];
++	pdriver->driver.probe_type = PROBE_FORCE_SYNCHRONOUS;
+ 	warp_entry_proc_init(warp_ctrl, warp);
+ 	warp_increase_ref();
+ 
+-	return platform_driver_register(pdriver);
++	ret = platform_driver_register(pdriver);
++	if (!ret) {
++		/* Registering a driver can succeed even when its probe failed. */
++		if (warp->pdev && warp->pdev->dev.driver == &pdriver->driver)
++			return 0;
++		platform_driver_unregister(pdriver);
++	}
++	warp_decrease_ref();
++	warp_entry_proc_exit(warp_ctrl, warp);
++err_release:
++	warp_entry_release(warp);
+ err:
++	/* HWIFI's existing WED_INVAL contract is -1, not an arbitrary errno. */
+ 	return -1;
+ }
+ EXPORT_SYMBOL(warp_register_client);
+@@ -1759,4 +1801,3 @@
+ 
+ MODULE_LICENSE("Dual BSD/GPL");
+ MODULE_DESCRIPTION(DRIVER_DESC);
+-
+--- a/warp_platform/warp_mtk.c
++++ b/warp_platform/warp_mtk.c
+@@ -2,6 +2,7 @@
+ /* Copyright (C) 2025 MediaTek Inc. */
+ 
+ #include <warp.h>
++#include <linux/rcupdate.h>
+ #ifdef CONFIG_WARP_DBG_SUPPORT
+ #include <net/ip.h>
+ #include <linux/tcp.h>
+@@ -119,19 +120,24 @@
+ wifi_tx_tuple_add(struct wifi_entry *wifi, u8 idx, u8 *tx_info, u32 wdma_rx_port)
+ {
+ 	struct wlan_tx_info t, *info =  &t;
++	typeof(ra_sw_nat_hook_tx) hook_tx;
+ 
+ 	memset(info, 0, sizeof(*info));
+ 	wifi->ops->txinfo_wrapper(tx_info, info);
+ 
+-	if (ra_sw_nat_hook_tx) {
++	rcu_read_lock();
++	hook_tx = READ_ONCE(ra_sw_nat_hook_tx);
++	if (hook_tx) {
+ 		struct sk_buff *skb = (struct sk_buff *)info->pkt;
+ 
+ 		if (!info->pkt) {
+ 			warp_dbg(WARP_DBG_INF, "%s():info->pkt is NULL!!!!\n", __func__);
++			rcu_read_unlock();
+ 			return -EFAULT;
+ 		}
+ 		if (!skb->head) {
+ 			warp_dbg(WARP_DBG_INF, "%s():skb->head is NULL!!!!\n", __func__);
++			rcu_read_unlock();
+ 			return -EFAULT;
+ 		}
+ 		if ((FOE_AI(skb) == HIT_UNBIND_RATE_REACH) ||
+@@ -185,7 +191,7 @@
+ 				FOE_WDMA_ID(skb), FOE_RX_ID(skb), FOE_WC_ID(skb), FOE_BSS_ID(skb));
+ 		}
+ 		/*use port for specify which hw_nat architecture*/
+-		if (ra_sw_nat_hook_tx(skb, wdma_rx_port) != 1)
++		if (hook_tx(skb, wdma_rx_port) != 1)
+ 			wifi->ops->txinfo_set_drop(tx_info);
+ 
+ #ifdef CONFIG_WARP_DBG_SUPPORT
+@@ -195,19 +201,27 @@
+ 	} else {
+ 		warp_dbg(WARP_DBG_INF, "%s(): ra_sw_nat_hook_tx is null!\n", __func__);
+ 	}
++	rcu_read_unlock();
+ 	return 0;
+ }
+ 
+ int
+ wdma_pse_port_config_state(u8 wdma_idx, bool up_state)
+ {
+-	if (hnat_set_wdma_pse_port_state) {
++	typeof(hnat_set_wdma_pse_port_state) set_port_state;
++	int ret;
++
++	rcu_read_lock();
++	set_port_state = READ_ONCE(hnat_set_wdma_pse_port_state);
++	if (set_port_state) {
+ 		warp_dbg(WARP_DBG_INF, "%s(): Set wdma idx = %u pse port state as %s\n",
+ 			__func__, wdma_idx, up_state ? "on" : "off");
+-		return hnat_set_wdma_pse_port_state(wdma_idx, up_state);
+-	}
++		ret = set_port_state(wdma_idx, up_state);
++		rcu_read_unlock();
++		return ret;
++	}
++	rcu_read_unlock();
+ 
+ 	warp_dbg(WARP_DBG_ERR, "%s(): hnat_set_wdma_pse_port_state() is null\n", __func__);
+ 	return -EOPNOTSUPP;
+ }
+-
+--- a/wdma.c
++++ b/wdma.c
+@@ -413,30 +413,33 @@
+ 	struct resource res;
+ 	int ret = 0;
+ 
++	/* Do not map registers or create rings without a valid port provider. */
++	ret = warp_get_wdma_port(wdma, idx);
++	if (ret)
++		return ret;
++
+ 	node = of_find_compatible_node(NULL, NULL, WDMA_DEV_NODE);
++	if (!node)
++		return -ENODEV;
+ 	ret = of_address_to_resource(node, idx, &res);
+-	if (ret)
++	if (ret) {
++		of_node_put(node);
+ 		return -ENODEV;
++	}
+ 
+ 	warp_dbg(WARP_DBG_INF, "%s(): get node=%p\n", __func__, &node);
+ 
+ 	/* get wdma physical addr and ioremap addr */
+ 	wdma->base_phy_addr = res.start;
+ 	wdma->base_addr = (unsigned long)of_iomap(node, idx);
++	of_node_put(node);
++	if (!wdma->base_addr)
++		return -ENOMEM;
+ 	wdma->pdev = pdev;
+ 	warp_dbg(WARP_DBG_INF, "%s(): wdma(%d) base_addr=0x%lx, base_phy_addr=0x%lx\n",
+ 		__func__, idx, wdma->base_addr, wdma->base_phy_addr);
+ 
+ 	wdma->ver = ver;
+-
+-
+-	ret = warp_get_wdma_port(wdma, idx);
+-	if (ret) {
+-		warp_dbg(WARP_DBG_ERR,
+-			"%s(): Unexpected error %d from getting wdma port with idx %u\n",
+-			__func__, ret, idx);
+-		return ret;
+-	}
+ 
+ 	/* initial wdma ring resource */
+ 	wdma_ring_init(wdma);

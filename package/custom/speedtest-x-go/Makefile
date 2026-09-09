@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=speedtest-x-go
-PKG_VERSION:=1.0.2
+PKG_VERSION:=1.2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=LGPL-2.1-or-later
 PKG_LICENSE_FILES:=LICENSE

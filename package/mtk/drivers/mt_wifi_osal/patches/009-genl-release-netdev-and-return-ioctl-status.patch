@@ -1,0 +1,29 @@
+--- a/mt_osal_genl.c
++++ b/mt_osal_genl.c
+@@ -112,11 +112,13 @@
+ 	net_priv_info = (struct mt_net_dev_priv *)netdev_priv((struct net_device *)dev);
+ 	if (!net_priv_info) {
+ 		MT_DEBUG_ERROR("!net_priv_info\n");
+-		return -ENETDOWN;
++		ret = -ENETDOWN;
++		goto out_put;
+ 	}
+ 	if (!net_priv_info->ioctl) {
+ 		MT_DEBUG_ERROR("!net_priv_info->ioctl\n");
+-		return -ENETDOWN;
++		ret = -ENETDOWN;
++		goto out_put;
+ 	}
+ 
+ 	pIoctlConfig->net_dev = dev;
+@@ -125,7 +127,9 @@
+ 	pIoctlConfig->data = ctrl_data_ptr;
+ 	ret = net_priv_info->ioctl(dev, pIoctlConfig);
+ 
+-	return 0;
++out_put:
++	dev_put(dev);
++	return ret;
+ }
+ 
+ int mt_fips_140_3_send_reply(int attr_type, struct mt_cmm_genl_ctrl *ctrl_data_rsp)

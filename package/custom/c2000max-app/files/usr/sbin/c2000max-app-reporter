@@ -33,9 +33,18 @@ elseif report_interval > 3600 then
 	report_interval = 3600
 end
 
+local function clock()
+	-- NTP can move wall time after boot. A backwards correction must not
+	-- postpone reports for hours, nor should a forward one create a burst.
+	local info = type(nixio.sysinfo) == "function" and nixio.sysinfo() or nil
+	return type(info) == "table" and tonumber(info.uptime) or os.time()
+end
+
 nixio.nanosleep(10)
 local next_status = 0
 local next_reports = 0
+local next_presence = 0
+local previous_clock = clock()
 local presence_stream
 
 local function close_presence_stream()
@@ -59,19 +68,31 @@ local function publish_presence()
 end
 
 while core.remote_enabled() do
-	local now = os.time()
+	local now = clock()
+	if now < previous_clock then
+		next_presence, next_status, next_reports = now, now, now
+	end
+	previous_clock = now
+	-- Each user-configured cadence has its own deadline. For example a
+	-- 60-second presence interval must not turn a 10-second status interval
+	-- into a 60-second one. Calls remain serial and never catch up in bursts.
+	if now >= next_presence then
+		publish_presence()
+		next_presence = clock() + presence_interval
+	end
 	if now >= next_status then
 		cloud.publish_online_status()
-		next_status = now + status_interval
+		next_status = clock() + status_interval
 	end
 	if now >= next_reports then
 		cloud.publish_reports()
-		next_reports = now + report_interval
+		next_reports = clock() + report_interval
 	end
 	-- Factory report_proactively emits cpestatus about every two seconds.
 	-- Keep this behind the user's signal-report permission.
-	publish_presence()
-	nixio.nanosleep(presence_interval)
+	now = clock()
+	nixio.nanosleep(math.max(1,
+		math.min(next_presence, next_status, next_reports) - now))
 end
 
 close_presence_stream()

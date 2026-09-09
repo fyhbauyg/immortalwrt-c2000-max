@@ -1,6 +1,6 @@
 --- a/mt_wifi/os/linux/cfg80211/cfg80211drv.c
 +++ b/mt_wifi/os/linux/cfg80211/cfg80211drv.c
-@@ -3542,8 +3542,8 @@ static int CFG80211DRV_OpsScan(
+@@ -3541,8 +3541,8 @@
  		struct DOT11_H *pDot11h = &pAd->Dot11_H;
  
  		if (pDot11h && (pDot11h->ChannelMode == CHAN_SILENCE_MODE)) {

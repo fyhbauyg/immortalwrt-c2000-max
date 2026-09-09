@@ -2,11 +2,11 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt_wifi_osal
-PKG_RELEASE:=1
+PKG_RELEASE:=3
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)/wifi_osal
-PKG_SOURCE:=mt_wifi_osal-543726.tar.xz
-PKG_SOURCE_URL:=https://github.com/chasey-dev/objs/releases/download/v1
-PKG_HASH:=102bf755e7d5b8a92767068ff03abe44ede05a2158936e76a793244acdb6d25a
+PKG_SOURCE:=mt_wifi_osal-a53418.tar.xz
+PKG_SOURCE_URL:=file://$(TOPDIR)/local-sources
+PKG_HASH:=dfa4b178f198504a707dec957242f8ede1a732823e940faa6304c723ac3224ad
 
 PKG_BUILD_PARALLEL:=1
 

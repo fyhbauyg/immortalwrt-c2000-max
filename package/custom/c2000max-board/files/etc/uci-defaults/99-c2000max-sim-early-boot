@@ -1,0 +1,12 @@
+#!/bin/sh
+. /lib/functions.sh
+[ "$(board_name)" = nradio,c2000-max ] || exit 0
+
+# rc.common enable creates S09 but does not remove the older S12 symlink
+# from a preserved overlay. Only remove the exact link we previously shipped.
+if [ -L /etc/rc.d/S12c2000max-sim ] &&
+   [ "$(readlink /etc/rc.d/S12c2000max-sim)" = ../init.d/c2000max-sim ]; then
+	rm -f /etc/rc.d/S12c2000max-sim
+fi
+/etc/init.d/c2000max-sim enable
+exit 0

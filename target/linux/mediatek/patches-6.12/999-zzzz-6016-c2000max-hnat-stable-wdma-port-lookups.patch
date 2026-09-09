@@ -1,0 +1,44 @@
+diff --git a/drivers/net/ethernet/mediatek/mtk_hnat/hnat.c b/drivers/net/ethernet/mediatek/mtk_hnat/hnat.c
+index 23f9911..a3976bc 100644
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat.c
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat.c
+@@ -66,9 +66,19 @@ EXPORT_SYMBOL(ra_sw_nat_hook_tx);
+ void (*ra_sw_nat_clear_bind_entries)(void) = NULL;
+ EXPORT_SYMBOL(ra_sw_nat_clear_bind_entries);
+ 
+-int (*hnat_get_wdma_tx_port)(u32 wdma_idx) = NULL;
++static int mtk_get_wdma_tx_port(u32 wdma_idx);
++static int mtk_get_wdma_rx_port(u32 wdma_idx);
++
++/*
++ * These lookups return compile-time PSE port numbers, not provider state.
++ * WARP needs them even while forwarding hooks are disabled or HNAT is
++ * unbound. Keep the exported pointer ABI, but never toggle these callbacks:
++ * they access no hnat_priv, device resources, or MMIO. An importing module
++ * holds the usual symbol dependency on this module's code lifetime.
++ */
++int (*hnat_get_wdma_tx_port)(u32 wdma_idx) = mtk_get_wdma_tx_port;
+ EXPORT_SYMBOL(hnat_get_wdma_tx_port);
+-int (*hnat_get_wdma_rx_port)(u32 wdma_idx) = NULL;
++int (*hnat_get_wdma_rx_port)(u32 wdma_idx) = mtk_get_wdma_rx_port;
+ EXPORT_SYMBOL(hnat_get_wdma_rx_port);
+ 
+ int (*ppe_del_entry_by_mac)(unsigned char *mac) = NULL;
+@@ -1853,8 +1863,6 @@ int hnat_enable_hook(void)
+ 		WRITE_ONCE(ppe_dev_unregister_hook, mtk_ppe_dev_unregister_hook);
+ 		WRITE_ONCE(ra_sw_nat_clear_bind_entries,
+ 			   foe_clear_all_bind_entries);
+-		WRITE_ONCE(hnat_get_wdma_tx_port, mtk_get_wdma_tx_port);
+-		WRITE_ONCE(hnat_get_wdma_rx_port, mtk_get_wdma_rx_port);
+ 		WRITE_ONCE(hnat_set_wdma_pse_port_state,
+ 			   mtk_set_wdma_pse_port_state);
+ 	}
+@@ -1901,8 +1909,6 @@ int hnat_disable_hook(void)
+ 	WRITE_ONCE(ra_sw_nat_clear_bind_entries, NULL);
+ 	WRITE_ONCE(ppe_dev_register_hook, NULL);
+ 	WRITE_ONCE(ppe_dev_unregister_hook, NULL);
+-	WRITE_ONCE(hnat_get_wdma_tx_port, NULL);
+-	WRITE_ONCE(hnat_get_wdma_rx_port, NULL);
+ 	WRITE_ONCE(hnat_set_wdma_pse_port_state, NULL);
+ 	WRITE_ONCE(ppe_del_entry_by_mac, NULL);
+ 	WRITE_ONCE(ppe_del_entry_by_ip, NULL);

@@ -1,0 +1,53 @@
+Subject: [PATCH] net: mediatek: guard absent MACs in diagnostic handlers
+
+Apply after 999-eth-90-mtk_eth_soc-support-proprietary-debugfs.patch
+and the existing downstream Ethernet patches.
+
+Disabled device-tree MAC nodes do not allocate eth->mac[]. Counter
+readers and PCS lookup helpers must skip these slots before dereferencing
+them. Counter readers also require an allocated statistics object.
+Keep existing interface filtering, counter reset behavior, PCS mappings,
+and out-of-range port rejection unchanged.
+
+--- a/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
+@@ -1117,6 +1117,9 @@ static int mtk_eth_debugfs_mac_cnt_show(struct seq_file *m, void *v)
+ 
+ 	for (i = MTK_GMAC1_ID; i < MTK_GMAC_ID_MAX; i++) {
++		if (!eth->mac[i] || !eth->mac[i]->hw_stats)
++			continue;
++
+ 		if (mtk_interface_mode_is_xgmii(eth->mac[i]->interface))
+ 			continue;
+ 
+ 		spin_lock(&eth->mac[i]->hw_stats->stats_lock);
+@@ -1235,6 +1238,9 @@ static int mtk_eth_debugfs_xfi_cnt_show(struct seq_file *m, void *v)
+ 
+ 	for (i = MTK_GMAC2_ID; i < MTK_GMAC_ID_MAX; i++) {
++		if (!eth->mac[i] || !eth->mac[i]->hw_stats)
++			continue;
++
+ 		if (!mtk_interface_mode_is_xgmii(eth->mac[i]->interface))
+ 			continue;
+ 
+ 		spin_lock(&eth->mac[i]->hw_stats->stats_lock);
+@@ -2433,6 +2439,9 @@ static struct mtk_pcs_lynxi *id_to_mtk_sgmii_pcs(struct mtk_eth *eth, unsigned int id)
+ 	if (id >= ARRAY_SIZE(sgmii_to_mac))
+ 		return NULL;
+ 
++	if (!eth->mac[sgmii_to_mac[id]])
++		return NULL;
++
+ 	pcs = eth->mac[sgmii_to_mac[id]]->sgmii_pcs;
+ 	if (!pcs)
+ 		return NULL;
+@@ -2537,6 +2546,9 @@ static struct mtk_usxgmii_pcs *id_to_mtk_usxgmii_pcs(struct mtk_eth *eth, unsigned int id)
+ 	if (id >= ARRAY_SIZE(usxgmii_to_mac))
+ 		return NULL;
+ 
++	if (!eth->mac[usxgmii_to_mac[id]])
++		return NULL;
++
+ 	pcs = eth->mac[usxgmii_to_mac[id]]->usxgmii_pcs;
+ 	if (!pcs)
+ 		return NULL;

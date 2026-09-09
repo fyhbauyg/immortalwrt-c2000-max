@@ -1,20 +1,259 @@
 #!/bin/sh
 
+LED_POLICY_VERSION=2
 LED_BLUE="blue:sig1"
 LED_GREEN="blue:sig2"
 LED_RED="blue:sig3"
 LED_ROOT="${C2000MAX_LED_SYSFS:-/sys/class/leds}"
+STATE_DIR="${C2000MAX_LED_STATE_DIR:-/var/run/c2000max-leds}"
+LED_INIT="${C2000MAX_LED_INIT:-/etc/init.d/led}"
+QMODEM_LED_INIT="${C2000MAX_QMODEM_LED_INIT:-/etc/init.d/qmodem_led}"
 
-led_user_forced_off() {
-	local wanted="$1" suffix section sysfs trigger default
+# Only LED-class attributes are ever touched. No MDIO/debugfs/boot environment
+# writes are needed, and a PHY LED is included automatically if its driver and
+# board DTS expose it through the standard Linux LED interface.
+LED_ATTRS="delay_on delay_off device_name link link_10 link_100 link_1000 link_2500 link_5000 link_10000 rx tx full_duplex half_duplex interval invert pattern"
+
+time_minutes() {
+	local value="$1" hour minute
+	case "$value" in *:*) ;; *) return 1 ;; esac
+	hour="${value%%:*}"; minute="${value#*:}"
+	case "$hour:$minute" in *[!0-9:]*|:*|*:|*:*:*) return 1 ;; esac
+	[ "${#hour}" -le 2 ] && [ "${#minute}" -le 2 ] || return 1
+	# Strip leading zeros rather than relying on non-POSIX base notation.
+	hour="${hour#0}"; minute="${minute#0}"
+	hour="${hour:-0}"; minute="${minute:-0}"
+	[ "$hour" -le 23 ] && [ "$minute" -le 59 ] || return 1
+	echo "$((hour * 60 + minute))"
+}
+
+scheduled_off() {
+	local first last current stamp hour minute
+	[ "$schedule_enabled" = 1 ] || return 1
+	first="$(time_minutes "$schedule_start")" || return 1
+	last="$(time_minutes "$schedule_end")" || return 1
+	[ "$first" != "$last" ] || return 1
+	# An unset boot clock must not accidentally activate an overnight rule.
+	# Use the system's local time; manually set, plausible clocks also work
+	# offline. Timezone changes trigger a reload through the system package.
+	set -- $(date '+%s %H %M')
+	stamp="$1"; hour="$2"; minute="$3"
+	case "$stamp" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$stamp" -ge 1704067200 ] || return 1
+	current="$(time_minutes "$hour:$minute")" || return 1
+	if [ "$first" -lt "$last" ]; then
+		[ "$current" -ge "$first" ] && [ "$current" -lt "$last" ]
+	else
+		[ "$current" -ge "$first" ] || [ "$current" -lt "$last" ]
+	fi
+}
+
+effective_off() {
+	[ "$(uci -q get c2000max.led.enabled)" = 0 ] || scheduled_off
+}
+
+led_error() {
+	umask 077
+	[ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+	printf '%s\n' "$1" > "$STATE_DIR/error" 2>/dev/null || true
+	return 1
+}
+
+remove_snapshot() {
+	local saved="$1" attr failed=0
+	# Delete only the daemon's known snapshot fields, never arbitrary content.
+	for attr in brightness trigger $LED_ATTRS; do rm -f "$saved/$attr" || failed=1; done
+	[ "$failed" = 0 ] || return 1
+	rm -f "$saved/complete" || return 1
+	rmdir "$saved" 2>/dev/null || true
+}
+
+discard_unapplied_snapshots() {
+	local saved
+	[ ! -f "$STATE_DIR/forced_off" ] || return 0
+	for saved in "$STATE_DIR/saved"/*; do
+		[ ! -d "$saved" ] || remove_snapshot "$saved" || true
+	done
+}
+
+snapshot_leds() {
+	local dir name saved trigger attr value failed=0
+	umask 077
+	mkdir -p "$STATE_DIR/saved" 2>/dev/null || {
+		led_error 'Cannot create LED snapshot directory; indicators were not suppressed'
+		return 1
+	}
+	for dir in "$LED_ROOT"/*; do
+		[ -d "$dir" ] && [ -w "$dir/brightness" ] || continue
+		name="${dir##*/}"
+		case "$name" in ''|.|..) continue ;; esac
+		saved="$STATE_DIR/saved/$name"
+		[ ! -f "$saved/complete" ] || continue
+		mkdir -p "$saved" 2>/dev/null || { failed=1; continue; }
+		cat "$dir/brightness" > "$saved/brightness" 2>/dev/null || { failed=1; continue; }
+		if [ -e "$dir/trigger" ]; then
+			value="$(cat "$dir/trigger" 2>/dev/null)" || { failed=1; continue; }
+			trigger="$(printf '%s\n' "$value" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')"
+			# A real LED trigger file has one bracketed active trigger. The
+			# single-token form also permits deterministic sysfs mock tests.
+			[ -n "$trigger" ] || trigger="$value"
+			case "$trigger" in ''|*[!A-Za-z0-9_:-]*) failed=1; continue ;; esac
+			printf '%s\n' "$trigger" > "$saved/trigger" 2>/dev/null || { failed=1; continue; }
+		fi
+		for attr in $LED_ATTRS; do
+			[ -e "$dir/$attr" ] || continue
+			value="$(cat "$dir/$attr" 2>/dev/null)" || { failed=1; break; }
+			printf '%s\n' "$value" > "$saved/$attr" 2>/dev/null || { failed=1; break; }
+		done
+		[ "$failed" = 0 ] || continue
+		: > "$saved/complete" 2>/dev/null || failed=1
+	done
+	if [ "$failed" != 0 ]; then
+		# No suppression has started yet: do not keep a successful-but-stale
+		# partial snapshot for a later off attempt after the LEDs change.
+		discard_unapplied_snapshots
+		led_error 'Cannot save all LED states; indicators were not newly suppressed'
+		return 1
+	fi
+	return 0
+}
+
+enter_off() {
+	snapshot_leds || return 1
+	if [ ! -f "$STATE_DIR/forced_off" ]; then
+		: > "$STATE_DIR/forced_off" 2>/dev/null || {
+			discard_unapplied_snapshots
+			led_error 'Cannot record LED suppression state; indicators were not suppressed'
+			return 1
+		}
+		# Preserve running intent without changing enable/disable flags. The
+		# board owns signal LEDs; suspend any other QModem LED writer once.
+		if [ -x "$QMODEM_LED_INIT" ] && "$QMODEM_LED_INIT" running >/dev/null 2>&1; then
+			: > "$STATE_DIR/qmodem_was_running" 2>/dev/null || {
+				rm -f "$STATE_DIR/forced_off"
+				discard_unapplied_snapshots
+				led_error 'Cannot save LED writer state; indicators were not suppressed'
+				return 1
+			}
+			"$QMODEM_LED_INIT" stop >/dev/null 2>&1 || true
+		fi
+	fi
+	if force_all_off; then rm -f "$STATE_DIR/error"; else
+		led_error 'Some LED writes failed; suppression will retry'
+		return 1
+	fi
+}
+
+led_attribute_matches() {
+	local dir="$1" attr="$2" expected="$3" actual
+	actual="$(cat "$dir/$attr" 2>/dev/null)" || return 1
+	if [ "$attr" = trigger ]; then
+		case "$actual" in
+			*'['*']'*) actual="$(printf '%s\n' "$actual" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;;
+		esac
+	fi
+	[ "$actual" = "$expected" ]
+}
+
+restore_led_attribute() {
+	local dir="$1" attr="$2" value="$3"
+	# Treat verified state as success. Rewriting an already-correct trigger
+	# needlessly restarts blink patterns and may fail during concurrent writes.
+	led_attribute_matches "$dir" "$attr" "$value" && return 0
+	[ -w "$dir/$attr" ] && [ ! -d "$dir/$attr" ] &&
+		printf '%s\n' "$value" > "$dir/$attr" 2>/dev/null &&
+		led_attribute_matches "$dir" "$attr" "$value"
+}
+
+restore_saved_led() {
+	local saved="$1" dir="$2" name="${2##*/}" trigger='' value attr
+	[ -d "$dir" ] || { RESTORE_FAILURES="${RESTORE_FAILURES} $name:missing-device"; return 1; }
+	if [ -f "$saved/trigger" ]; then
+		trigger="$(cat "$saved/trigger" 2>/dev/null)" || {
+			RESTORE_FAILURES="${RESTORE_FAILURES} $name:trigger-snapshot"; return 1;
+		}
+		if ! led_attribute_matches "$dir" trigger "$trigger"; then
+			restore_led_attribute "$dir" trigger none || {
+				RESTORE_FAILURES="${RESTORE_FAILURES} $name:trigger-none"; return 1;
+			}
+			value="$(cat "$saved/brightness" 2>/dev/null)" &&
+				restore_led_attribute "$dir" brightness "$value" || {
+				RESTORE_FAILURES="${RESTORE_FAILURES} $name:brightness"; return 1;
+			}
+			restore_led_attribute "$dir" trigger "$trigger" || {
+				RESTORE_FAILURES="${RESTORE_FAILURES} $name:trigger"; return 1;
+			}
+		fi
+	fi
+	if [ -z "$trigger" ] || [ "$trigger" = none ]; then
+		value="$(cat "$saved/brightness" 2>/dev/null)" &&
+			restore_led_attribute "$dir" brightness "$value" || {
+			RESTORE_FAILURES="${RESTORE_FAILURES} $name:brightness"; return 1;
+		}
+	fi
+	# An active timer/heartbeat/netdev trigger owns its instantaneous brightness;
+	# checking a saved blink phase would falsely report a restore failure.
+	for attr in $LED_ATTRS; do
+		[ -f "$saved/$attr" ] || continue
+		value="$(cat "$saved/$attr" 2>/dev/null)" &&
+			restore_led_attribute "$dir" "$attr" "$value" || {
+			RESTORE_FAILURES="${RESTORE_FAILURES} $name:$attr"; return 1;
+		}
+	done
+	return 0
+}
+
+has_system_led_config() {
+	uci -q show system 2>/dev/null |
+		sed -n "s/^system\.\([^=]*\)=\{0,1\}'\{0,1\}led'\{0,1\}$/\1/p" | grep -q .
+}
+
+leave_off() {
+	local saved name dir failed=0 pending_managed=0 RESTORE_FAILURES=''
+	[ -f "$STATE_DIR/forced_off" ] || return 0
+	for saved in "$STATE_DIR/saved"/*; do
+		[ -d "$saved" ] && [ -f "$saved/complete" ] || continue
+		name="${saved##*/}"
+		case "$name" in ''|.|..) continue ;; esac
+		dir="$LED_ROOT/$name"
+		if led_user_managed "$name"; then
+			# A current UCI LED rule wins over the snapshot, including edits
+			# made during a failed restore. Let the LED service apply it below.
+			pending_managed=1
+			continue
+		fi
+		if restore_saved_led "$saved" "$dir"; then
+			remove_snapshot "$saved" || { failed=1; RESTORE_FAILURES="${RESTORE_FAILURES} $name:snapshot-cleanup"; }
+		else failed=1; fi
+	done
+	# Reload LED configuration, not networking. This honours any user's LED
+	# configuration edits made while lights were suppressed.
+	if has_system_led_config && [ -x "$LED_INIT" ]; then
+		if "$LED_INIT" reload >/dev/null 2>&1; then
+			for saved in "$STATE_DIR/saved"/*; do
+				[ -d "$saved" ] && led_user_managed "${saved##*/}" || continue
+				remove_snapshot "$saved" || failed=1
+			done
+		else failed=1; RESTORE_FAILURES="${RESTORE_FAILURES} system-led:reload"; fi
+	elif [ "$pending_managed" = 1 ]; then failed=1; fi
+	if [ "$failed" != 0 ]; then
+		led_error "LED restore pending:${RESTORE_FAILURES:- unknown}; snapshots retained for retry"
+		return 1
+	fi
+	if [ -f "$STATE_DIR/qmodem_was_running" ] && [ -x "$QMODEM_LED_INIT" ]; then
+		"$QMODEM_LED_INIT" enabled >/dev/null 2>&1 && "$QMODEM_LED_INIT" start >/dev/null 2>&1 || true
+	fi
+	rm -f "$STATE_DIR/qmodem_was_running" "$STATE_DIR/forced_off" "$STATE_DIR/error"
+}
+
+led_user_managed() {
+	local wanted="$1" suffix section sysfs
 	suffix="${wanted##*:}"
 	for section in $(uci -q show system 2>/dev/null |
 		sed -n "s/^system\.\([^=]*\)=\{0,1\}'\{0,1\}led'\{0,1\}$/\1/p"); do
 		sysfs="$(uci -q get "system.$section.sysfs")"
 		[ "$sysfs" = "$wanted" ] || [ "${sysfs##*:}" = "$suffix" ] || continue
-		trigger="$(uci -q get "system.$section.trigger")"
-		default="$(uci -q get "system.$section.default")"
-		[ "$trigger" = none ] && [ "${default:-0}" != 1 ] && return 0
+		return 0
 	done
 	return 1
 }
@@ -35,7 +274,9 @@ led_dir() {
 
 set_led() {
 	local dir value="$2"
-	led_user_forced_off "$1" && value=0
+	# An explicit user LED section owns its trigger and brightness. Do not
+	# replace a custom heartbeat/netdev/timer (or fixed on/off) with signal.
+	led_user_managed "$1" && return 0
 	dir="$(led_dir "$1")"
 	[ -n "$dir" ] || return 0
 	echo none > "$dir/trigger" 2>/dev/null
@@ -44,10 +285,7 @@ set_led() {
 
 blink_led() {
 	local dir="$1" delay="${2:-500}"
-	if led_user_forced_off "$dir"; then
-		set_led "$dir" 0
-		return 0
-	fi
+	led_user_managed "$dir" && return 0
 	dir="$(led_dir "$dir")"
 	[ -n "$dir" ] || return 0
 	echo timer > "$dir/trigger" 2>/dev/null
@@ -62,26 +300,16 @@ set_rgb() {
 }
 
 force_all_off() {
-	local dir
+	local dir failed=0
 	for dir in "$LED_ROOT"/*; do
-		[ -d "$dir" ] || continue
-		[ ! -w "$dir/trigger" ] || echo none > "$dir/trigger" 2>/dev/null
-		[ ! -w "$dir/brightness" ] || echo 0 > "$dir/brightness" 2>/dev/null
+		[ -d "$dir" ] && [ -w "$dir/brightness" ] || continue
+		if [ -e "$dir/trigger" ]; then
+			[ -w "$dir/trigger" ] && echo none > "$dir/trigger" 2>/dev/null || failed=1
+		fi
+		echo 0 > "$dir/brightness" 2>/dev/null || failed=1
 	done
+	[ "$failed" = 0 ]
 }
-
-if [ "${1:-}" = off-lock ]; then
-	# LED triggers belong to several independent services.  Keep a very cheap
-	# board-level lock active while the user requests all LEDs off, so a later
-	# netdev/modem event cannot silently light them again.
-	trap 'force_all_off; exit 0' EXIT INT TERM
-	while [ "$(uci -q get c2000max.led.enabled)" = 0 ]; do
-		force_all_off
-		sleep 2
-	done
-	force_all_off
-	exit 0
-fi
 
 first_qmodem_section() {
 	uci -q show qmodem 2>/dev/null |
@@ -120,33 +348,20 @@ data_online() {
 }
 
 cleanup() {
-	set_rgb 0 0 0
+	# Keep a suppressed snapshot across a service reload/crash, so restart
+	# cannot overwrite it with already-dark values. A reboot discards /var/run
+	# and naturally uses current boot/system LED settings as the new baseline.
+	if effective_off; then enter_off; else leave_off; fi
 }
 
-trap cleanup EXIT INT TERM
-
-interval="$(uci -q get c2000max.led.interval)"
-weak="$(uci -q get c2000max.led.weak_rsrp)"
-good="$(uci -q get c2000max.led.good_rsrp)"
-case "$interval" in ''|*[!0-9]*) interval=15 ;; esac
-[ "$interval" -ge 10 ] 2>/dev/null || interval=10
-case "$weak" in -[0-9]*) ;; *) weak=-90 ;; esac
-case "$good" in -[0-9]*) ;; *) good=-80 ;; esac
-
-# procd reloads this service when either UCI package changes.  Cache static
-# thresholds here and issue at most one serialized QModem status read per
-# interval instead of reparsing all configuration every five seconds.
-while :; do
-	[ "$(uci -q get c2000max.led.enabled)" != 0 ] || exit 0
-
+update_signal() {
 	section="$(first_qmodem_section)"
 	if [ -z "$section" ]; then
 		# No modem: red slow blink.
 		set_led "$LED_BLUE" 0
 		set_led "$LED_GREEN" 0
 		blink_led "$LED_RED" 1000
-		sleep "$interval"
-		continue
+		return
 	fi
 
 	interface="$(uci -q get "qmodem.$section.alias")"
@@ -156,8 +371,7 @@ while :; do
 		set_led "$LED_BLUE" 0
 		set_led "$LED_GREEN" 0
 		blink_led "$LED_RED" 1000
-		sleep "$interval"
-		continue
+		return
 	fi
 
 	rsrp="$(get_rsrp "$section")"
@@ -180,5 +394,46 @@ while :; do
 			blink_led "$LED_GREEN" 700
 			;;
 	esac
-	sleep "$interval"
+}
+
+led_tick() {
+	if effective_off; then
+		enter_off
+		remaining=0
+	else
+		leave_off
+		if [ "$remaining" -le 0 ]; then
+			update_signal
+			remaining="$interval"
+		fi
+		remaining="$((remaining - 2))"
+	fi
+}
+
+[ "${1:-}" != --library ] || return 0
+
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+
+schedule_enabled="$(uci -q get c2000max.led.schedule_enabled)"
+schedule_start="$(uci -q get c2000max.led.schedule_start)"
+schedule_end="$(uci -q get c2000max.led.schedule_end)"
+schedule_start="${schedule_start:-22:00}"
+schedule_end="${schedule_end:-07:00}"
+
+interval="$(uci -q get c2000max.led.interval)"
+weak="$(uci -q get c2000max.led.weak_rsrp)"
+good="$(uci -q get c2000max.led.good_rsrp)"
+case "$interval" in ''|*[!0-9]*) interval=15 ;; esac
+[ "$interval" -ge 10 ] 2>/dev/null || interval=10
+case "$weak" in -[0-9]*) ;; *) weak=-90 ;; esac
+case "$good" in -[0-9]*) ;; *) good=-80 ;; esac
+
+# Scheduling runs at two-second granularity without modem queries. Preserve
+# the normal, slower signal refresh interval and perform zero AT reads while
+# any off policy is in effect. procd reloads cached rules on UCI changes.
+remaining=0
+while :; do
+	led_tick
+	sleep 2
 done

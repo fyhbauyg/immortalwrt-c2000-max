@@ -1,12 +1,39 @@
 #!/bin/sh /etc/rc.common
 
-START=12
+START=09
 STOP=10
+
+sim_boot_finish() {
+	local rc="$1" statusfile="$2" pidfile="$3"
+	if [ "$rc" = 0 ]; then
+		printf 'ready\n' > "$statusfile"
+	else
+		printf 'failed\n' > "$statusfile"
+	fi
+	awk '{ print $1, "sim-worker-finished" }' /proc/uptime >> /tmp/c2000max-sim-boot.timeline
+	rm -f "$pidfile"
+}
 
 boot() {
 	local state=/tmp/c2000max-sim-boot.json
 	local pidfile=/var/run/c2000max-sim-boot.pid
+	local statusfile=/var/run/c2000max-sim-boot.status
 	local prepared=0 restore_rc
+
+	# Start the hardware before S10boot loads modules and applies first-boot
+	# defaults. Keep power/mux preparation synchronous (no competing UCI
+	# writers), then overlap the modem's own cold boot with the remaining init.
+	# S10boot normally creates these paths; use its same permissions here.
+	mkdir -p /var/lock /var/run /tmp/.uci || return 1
+	chmod 1777 /var/lock
+	chmod 0700 /tmp/.uci
+	# Preserved overlays can still contain the old S12 link during upgrade.
+	# A boot invocation is once-only even if both service names are queued.
+	case "$(cat "$statusfile" 2>/dev/null)" in
+		pending|ready|failed) return 0 ;;
+	esac
+	printf 'pending\n' > "$statusfile"
+	awk '{ print $1, "power-prepare-start" }' /proc/uptime > /tmp/c2000max-sim-boot.timeline
 
 	# Restore the persistent mux and start the modem near the beginning of rc.d.
 	# Only this short phase blocks boot. AT readiness and route verification run
@@ -17,9 +44,27 @@ boot() {
 	else
 		logger -t c2000max-sim "early modem power preparation failed; deferring one recovery attempt"
 	fi
+	awk '{ print $1, "power-prepare-finished" }' /proc/uptime >> /tmp/c2000max-sim-boot.timeline
 
 	(
-		trap 'rm -f "$pidfile"' EXIT
+		trap 'sim_boot_finish "$?" "$statusfile" "$pidfile"' EXIT
+		trap 'exit 143' TERM
+		trap 'exit 130' INT
+		# $$ remains the parent's PID in an ash subshell. Reading proc/self
+		# with the shell builtin yields this worker's PID, without a race
+		# between the parent's pidfile write and the child's exit cleanup.
+		read -r worker_pid worker_stat < /proc/self/stat || exit 1
+		printf '%s\n' "$worker_pid" > "$pidfile" || exit 1
+		# S09 runs before S10 UCI defaults. AT restoration may write UCI, so
+		# wait for the S79 queue service before entering that phase. Pure
+		# hardware cold boot continues in parallel throughout this wait.
+		queue_wait=120
+		while ! ubus -t 1 -S list at-daemon 2>/dev/null | grep -qx at-daemon; do
+			[ ! -e /tmp/c2000max-sim-shutdown ] || exit 1
+			[ "$queue_wait" -gt 0 ] || exit 1
+			sleep 1
+			queue_wait=$((queue_wait - 1))
+		done
 		if [ "$prepared" = 1 ]; then
 			# Never cut power merely because a tty node or modem identity is a
 			# few seconds late. The restore command polls until AT is genuinely
@@ -52,7 +97,6 @@ boot() {
 		C2000MAX_MODEM_POWER_OFF_SECONDS=10 \
 			/usr/sbin/c2000max-sim boot-restore >"$state" 2>&1
 	) &
-	echo "$!" > "$pidfile"
 }
 
 start() {
@@ -63,15 +107,35 @@ reload() {
 	/usr/sbin/c2000max-sim apply >/dev/null 2>&1 &
 }
 
+sim_boot_worker_active() {
+	local pid="$1" procroot="${2:-/proc}" cmdline
+
+	case "$pid" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$pid" -gt 1 ] 2>/dev/null || return 1
+	[ -r "$procroot/$pid/cmdline" ] || return 1
+	cmdline="$(tr '\000' '\n' < "$procroot/$pid/cmdline" 2>/dev/null)" || return 1
+	printf '%s\n' "$cmdline" |
+		grep -Eq '^/etc/(init\.d/c2000max-sim|rc\.d/S[0-9][0-9]c2000max-sim)$' || return 1
+	printf '%s\n' "$cmdline" | grep -qx boot
+}
+
 stop() {
 	local pidfile=/var/run/c2000max-sim-boot.pid
 	local pid
 
-	pid="$(cat "$pidfile" 2>/dev/null)"
-	case "$pid" in
-		''|*[!0-9]*) ;;
-		*) kill "$pid" >/dev/null 2>&1 || true ;;
-	esac
-	rm -f "$pidfile"
+	# Publish the shutdown guard before terminating the worker. An in-flight
+	# CLI operation must see the guard before any possible power-on fallback.
 	/usr/sbin/c2000max-sim power-off >/dev/null 2>&1 || true
+	pid="$(cat "$pidfile" 2>/dev/null)"
+	if sim_boot_worker_active "$pid"; then
+		# A shell may defer TERM while its foreground CLI is still running.
+		# Keep the pidfile until the worker's EXIT trap has actually run, so
+		# the dial gate cannot mistake a stopping worker for a finished one.
+		kill -TERM "$pid" >/dev/null 2>&1 || true
+		return 0
+	fi
+	# Only discard stale state; never signal a reused or unrelated PID.
+	rm -f "$pidfile"
 }

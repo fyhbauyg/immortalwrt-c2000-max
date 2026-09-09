@@ -12,7 +12,7 @@
  INT MCSMappingRateTable[] = {
 --- a/mt_wifi/feature/rrm/rrm.c
 +++ b/mt_wifi/feature/rrm/rrm.c
-@@ -2507,6 +2507,9 @@ VOID RRM_PeerMeasureReqAction(
+@@ -2507,6 +2507,9 @@
  		IN PRTMP_ADAPTER pAd,
  		IN MLME_QUEUE_ELEM *Elem)
  {
@@ -24,7 +24,7 @@
  	RRM_BEACON_REQ_INFO BcnReq;
 --- a/mt_wifi/feature/rrm/rrm_tlv.c
 +++ b/mt_wifi/feature/rrm/rrm_tlv.c
-@@ -980,6 +980,9 @@ VOID RRM_EnqueueNeighborRep(
+@@ -980,6 +980,9 @@
  	IN PCHAR pSsid,
  	IN UINT8 SsidLen)
  {

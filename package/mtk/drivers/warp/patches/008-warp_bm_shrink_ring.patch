@@ -1,6 +1,6 @@
 --- a/Makefile
 +++ b/Makefile
-@@ -12,6 +12,14 @@ ifeq ($(CONFIG_WARP_MEMORY_LEAK_DBG), y)
+@@ -15,6 +15,14 @@ ifeq ($(CONFIG_WARP_MEMORY_LEAK_DBG), y)
  ccflags-y += -DMEM_LEAK_DBG
  endif
  
@@ -17,7 +17,7 @@
  endif
 --- a/warp_bm.h
 +++ b/warp_bm.h
-@@ -20,6 +20,18 @@
+@@ -7,6 +7,18 @@
  #include "warp_wifi.h"
  #include <linux/interrupt.h>
  
@@ -38,7 +38,7 @@
  #define PARTIAL_TXDMAD_SDP0_H_MASK		0x0000FFFF
 --- a/warp_rx_bm.c
 +++ b/warp_rx_bm.c
-@@ -892,15 +892,18 @@ wed_rx_bm_init(struct wed_entry *wed, st
+@@ -881,15 +881,18 @@ wed_rx_bm_init(struct wed_entry *wed, st
  
  	if (hw) {
  		res->ring_num = 1;
@@ -60,7 +60,7 @@
  			if (sw_conf->vld_group*128 <= hw->hw_rx_token_num) {
 --- a/warp_rx_page_bm.c
 +++ b/warp_rx_page_bm.c
-@@ -279,12 +279,21 @@ wed_rx_page_bm_init(struct wed_entry *we
+@@ -268,12 +268,21 @@ wed_rx_page_bm_init(struct wed_entry *we
  	struct wed_rx_ctrl *rx_ctrl = &res_ctrl->rx_ctrl;
  	struct wed_rx_page_bm *bm = &rx_ctrl->page_bm;
  
@@ -85,7 +85,7 @@
  
 --- a/warp_tx_bm_v2.c
 +++ b/warp_tx_bm_v2.c
-@@ -241,12 +241,15 @@ wed_txbm_init(struct wed_entry *wed, str
+@@ -230,12 +230,15 @@ wed_txbm_init(struct wed_entry *wed, str
  	res->token_start = 0;
  	res->token_end = (res->token_start + res->token_num - 1);
  

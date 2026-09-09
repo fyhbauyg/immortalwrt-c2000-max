@@ -23,7 +23,9 @@ AT_TRANSACTION_HELD=0
 AT_TRANSACTION_PORT=
 
 log() {
-	logger -t "$TAG" "$*"
+	local sim_uptime sim_idle
+	read -r sim_uptime sim_idle < /proc/uptime
+	logger -t "$TAG" "[uptime=${sim_uptime:-unknown}] $*"
 }
 
 fail() {
@@ -159,7 +161,9 @@ resolve_vendor() {
 	esac
 
 	manufacturer="$(qmodem_get "$section" manufacturer)"
-	identity="$(printf '%s %s' "$manufacturer" "$model" | tr '[:upper:]' '[:lower:]')"
+	# Modem identities are ASCII. Some installed BusyBox builds omit
+	# FEATURE_TR_CLASSES, leaving MT5700M-CN unchanged with [:upper:].
+	identity="$(printf '%s %s' "$manufacturer" "$model" | tr 'A-Z' 'a-z')"
 	case "$identity" in
 		*huawei*|*tdtech*|*td\ tech*|*mt5700*) echo huawei; return ;;
 		*fibocom*|*fm350*) echo fibocom; return ;;
@@ -167,7 +171,7 @@ resolve_vendor() {
 	esac
 
 	manufacturer="$(clean_identity "$(send_at "$port" 'AT+CGMI' 2>/dev/null)")"
-	identity="$(printf '%s %s' "$manufacturer" "$model" | tr '[:upper:]' '[:lower:]')"
+	identity="$(printf '%s %s' "$manufacturer" "$model" | tr 'A-Z' 'a-z')"
 	case "$identity" in
 		*huawei*|*tdtech*|*td\ tech*|*mt5700*) echo huawei ;;
 		*fibocom*|*fm350*) echo fibocom ;;
@@ -390,6 +394,7 @@ wait_for_modem_ready() {
 			at_response_ok "$response" || continue
 			model="$(clean_identity "$(send_at "$port" 'AT+CGMM' 3 2>/dev/null)")"
 			[ -n "$model" ] || continue
+			log "modem AT ready (port=$port, model=$model)"
 			sleep 2
 			printf '%s\n' "$port"
 			return 0
@@ -423,9 +428,10 @@ prepare_modem_boot() {
 	# 0=off and 1=on. Power must be removed before GPIO48 changes; otherwise a
 	# warm reboot can briefly attach channel 2 to the internal SIM.
 	write_modem_power 0 || return 1
+	log "boot modem power off (hold=${off_seconds}s)"
 	sleep "$off_seconds"
 	if ! write_gpio_mux "$target_mux"; then
-		write_modem_power 1 >/dev/null 2>&1
+		[ -e "$SHUTDOWN_MARKER" ] || write_modem_power 1 >/dev/null 2>&1
 		return 1
 	fi
 	sleep 1
@@ -480,7 +486,7 @@ query_fibocom_channel() {
 	# A few older Fibocom firmware branches report MAIN/SUB instead of the
 	# numeric FM350 format. Accept both without changing the canonical mapping.
 	if [ -z "$value" ]; then
-		case "$(printf '%s\n' "$response" | tr '[:lower:]' '[:upper:]')" in
+		case "$(printf '%s\n' "$response" | tr 'a-z' 'A-Z')" in
 			*+GTDUALSIM:*MAIN*) value=0 ;;
 			*+GTDUALSIM:*SUB*) value=1 ;;
 		esac
@@ -716,6 +722,7 @@ apply_slot() {
 
 	model="$(resolve_model "$section" "$port")"
 	vendor="$(resolve_vendor "$section" "$port" "$model")"
+	log "resolved SIM modem (model=$model, vendor=$vendor, port=$port)"
 	case "$vendor" in
 		huawei|fibocom|quectel) ;;
 		*) fail "暂不支持模组：$model" ; return 1 ;;

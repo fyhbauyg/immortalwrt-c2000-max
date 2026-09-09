@@ -1,6 +1,6 @@
 --- a/mt_wifi/os/linux/rt_linux.c
 +++ b/mt_wifi/os/linux/rt_linux.c
-@@ -135,74 +135,8 @@ UINT32 DebugSubCategory[DBG_LVL_MAX + 1]
+@@ -135,74 +135,8 @@
  		DBG_SUBCAT_EN_ALL_MASK,
  		DBG_SUBCAT_EN_ALL_MASK
  	}, /* ERROR */

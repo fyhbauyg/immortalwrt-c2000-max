@@ -59,6 +59,13 @@ a { color: var(--primary); }
 	cursor: pointer;
 }
 #startStop.running { background: #d64848; }
+.test-settings { display: flex; flex-wrap: wrap; gap: 1rem 2rem; border: 0; margin: 0 0 1.5rem; padding: 0; }
+.test-settings legend { margin-bottom: .75rem; font-weight: 700; }
+.test-settings label { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; color: var(--muted); }
+.test-settings select { padding: .55rem .7rem; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.test-status { min-height: 2.8em; text-align: center; color: var(--muted); line-height: 1.5; }
+.test-status.error { color: #d64848; }
+.testing .panel { backdrop-filter: none; box-shadow: none; }
 .progress { height: 7px; overflow: hidden; border-radius: 999px; background: rgba(22,138,176,.14); }
 .progress i { display: block; width: 0; height: 100%; background: var(--primary); transition: width .25s ease; }
 .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 2.2rem; }

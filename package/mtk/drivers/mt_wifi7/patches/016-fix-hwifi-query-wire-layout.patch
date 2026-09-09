@@ -1,0 +1,68 @@
+--- a/mt_wifi/include/rtmp.h
++++ b/mt_wifi/include/rtmp.h
+@@ -8960,12 +8960,15 @@
+ 	u16 band_idx_bmp_sup;
+ };
+ 
++/* HWIFI query ABI capacity is independent of the MCU event band count. */
++#define MTK_HWIFI_QUERY_MAX_BANDS 3
++
+ struct mld_sta_query_t {
+ 	u16 mld_sta_idx;
+ 	u16 pri_mld_id;
+ 	u16 sec_mld_id;
+ 	u16 connt_band_idx_bmp;
+-	u16 lwtbl_id[MAX_BAND_NUM];
++	u16 lwtbl_id[MTK_HWIFI_QUERY_MAX_BANDS];
+ };
+ 
+ struct info_query_t {
+@@ -8975,6 +8978,14 @@
+ 		struct mld_sta_query_t mld_sta;
+ 	};
+ };
++
++_Static_assert(sizeof(struct info_query_t) == 16, "HWIFI query ABI size");
++_Static_assert(__builtin_offsetof(struct info_query_t, mld_sta) == 2,
++	"HWIFI query ABI payload offset");
++_Static_assert(__builtin_offsetof(struct info_query_t, mld_sta.lwtbl_id) == 10,
++	"HWIFI query ABI band-array offset");
++_Static_assert(sizeof(((struct info_query_t *)0)->mld_sta.lwtbl_id) == 6,
++	"HWIFI query ABI band-array size");
+ 
+ enum MTK_QRY_TYPE {
+ 	QRY_TYPE_CHIP_CAPS,
+--- a/wlan_hwifi/core.h
++++ b/wlan_hwifi/core.h
+@@ -433,12 +433,15 @@
+  * @param connection: band connection status (bitmap)
+  * @param link_id: band to link_id(=lwtbl_id) mapping
+  */
++/* Keep this transport capacity aligned with the upper MAC query ABI. */
++#define MTK_HWIFI_QUERY_MAX_BANDS 3
++
+ struct mtk_hw_mld_sta_query {
+ 	u16 mld_sta_idx;
+ 	u16 pri_uwtbl_id;
+ 	u16 sec_uwtbl_id;
+ 	u16 connection;
+-	u16 lwtbl_id[MAX_BAND_NUM];
++	u16 lwtbl_id[MTK_HWIFI_QUERY_MAX_BANDS];
+ };
+ 
+ /** struct mtk_hw_info_query - mtk hw info query
+@@ -456,6 +459,14 @@
+ 		struct mtk_hw_mld_sta_query mld_sta;
+ 	};
+ };
++
++_Static_assert(sizeof(struct mtk_hw_info_query) == 16, "HWIFI query ABI size");
++_Static_assert(__builtin_offsetof(struct mtk_hw_info_query, mld_sta) == 2,
++	"HWIFI query ABI payload offset");
++_Static_assert(__builtin_offsetof(struct mtk_hw_info_query, mld_sta.lwtbl_id) == 10,
++	"HWIFI query ABI band-array offset");
++_Static_assert(sizeof(((struct mtk_hw_info_query *)0)->mld_sta.lwtbl_id) == 6,
++	"HWIFI query ABI band-array size");
+ 
+ enum {
+ 	MTK_HW_QRY_TYPE_CHIP_CAPS,

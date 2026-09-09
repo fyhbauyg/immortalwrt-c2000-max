@@ -1,0 +1,18 @@
+From: C2000Max local integration
+Subject: [PATCH] hwifi: explicitly include the kernel bitfield helpers
+
+Patch 008 already guards the local fallback definitions. Include their
+kernel provider explicitly before those guards instead of depending on
+transitive inclusion through os/mt_linux.h. This also supports the 6.12
+backport of the non-constant lowercase field_prep()/field_get() helpers.
+
+--- a/wlan_hwifi/utility.h
++++ b/wlan_hwifi/utility.h
+@@ -35,6 +35,7 @@
+ #include "hwifi_muldf.h"
+ #endif /* CONFIG_MULDF_HELPER */
+ #include "os/mt_linux.h"
++#include <linux/bitfield.h>
+ 
+ #ifndef __bf_shf
+ #define __bf_shf(x) (__builtin_ffsll(x) - 1)

@@ -31,6 +31,9 @@ const OPTIONS = [
 	{ name: 'local_cellular_record_enable', title: '蜂窝记录控制',
 		desc: '允许 APP 开关蜂窝记录服务；记录内容可能含小区信息。',
 		risk: true },
+	{ name: 'local_led_enable', title: '本地指示灯控制',
+		desc: '允许 APP 读取、开关可控指示灯，并设置定时关闭；不授予修改网络的权限。',
+		risk: true },
 	{ name: 'password_enable', title: '修改管理员密码',
 		desc: '允许本地或云端 APP 修改 root 管理密码。', risk: true },
 	{ name: 'reboot_enable', title: '重启设备',
@@ -40,6 +43,9 @@ const OPTIONS = [
 		risk: true },
 	{ name: 'device_report_enable', title: '设备统计',
 		desc: '允许查询及主动发送设备、运行状态和配置摘要。',
+		risk: true },
+	{ name: 'remote_led_enable', title: '远程指示灯控制',
+		desc: '允许通过官方云端读取、开关可控指示灯，并设置定时关闭。',
 		risk: true },
 	{ name: 'signal_report_enable', title: '信号上报',
 		desc: '允许主动发送蜂窝网络、信号和小区状态。', risk: true },
@@ -86,12 +92,21 @@ const INTERVALS = [
 		min: 1, max: 10, fallback: 1 },
 	{ name: 'signal_carrier_interval', title: '载波聚合刷新', unit: '秒',
 		desc: '载波拓扑与聚合频段的缓存时间。',
-		min: 2, max: 120, fallback: 10 }
+		min: 2, max: 120, fallback: 10 },
+	{ name: 'presence_interval', title: '云端在线心跳', unit: '秒',
+		desc: '发送轻量在线心跳的间隔，不代表信号采样周期；过长可能使 APP 在线状态更新变慢。',
+		min: 2, max: 60, fallback: 2 },
+	{ name: 'status_interval', title: '云端状态通知', unit: '秒',
+		desc: '向官方云端发送设备在线状态的间隔，不额外查询蜂窝模组。',
+		min: 10, max: 300, fallback: 30 },
+	{ name: 'report_interval', title: '云端摘要上报', unit: '秒',
+		desc: '主动发送已授权的设备、终端和流量摘要；越短请求越频繁，APP 主动查询不必等待此周期。',
+		min: 60, max: 3600, fallback: 300 }
 ];
 
 const PROTOCOL_MODES = [
-	{ value: 'modern', title: '鲲鹏无限 3.1+（AES，推荐）' },
-	{ value: 'legacy', title: '旧版 2.x（DES 兼容）' }
+	{ value: 'modern', title: '新版加密协议（AES，推荐）' },
+	{ value: 'legacy', title: '传统兼容协议（DES）' }
 ];
 
 const callStatus = rpc.declare({
@@ -127,6 +142,8 @@ function formatDuration(value) {
 	let seconds = Number(value) || 0;
 	if (seconds <= 0)
 		return '尚未建立';
+	if (seconds < 60)
+		return Math.floor(seconds) + '秒';
 	const days = Math.floor(seconds / 86400);
 	seconds %= 86400;
 	const hours = Math.floor(seconds / 3600);
@@ -187,7 +204,7 @@ function protocolRow(status) {
 		E('div', { 'class': 'cbi-value-field' }, [
 			select,
 			E('div', { 'class': 'cbi-value-description' },
-				'3.1+ 使用 AES 本地协议；只有旧版 APP 无法连接时才切换到 2.x 兼容。')
+				'鲲鹏无限 3.1/3.2 均保留两种协议，并根据设备探测结果选择；新版 APP 没有整体退回 2.x。通常保持 AES 即可。')
 		])
 	]);
 }
@@ -252,6 +269,41 @@ function localStatusLabel(status) {
 	return 'HTTP APP API 已就绪（网关端口 80，回环检测通过）';
 }
 
+function cacheStatusLabel(status) {
+	if (!flag(status.cache_running))
+		return flag(status.local_enable) || flag(status.remote_enable) ?
+			'缓存进程未运行' : '未启用';
+	if (status.cache_state === 'error')
+		return '最近预热失败：' + text(status.cache_last_error,
+			text(status.cache_message, '原因未知'));
+	return flag(status.cache_active) ? '活跃，按设置预热' : '闲置，按需刷新';
+}
+
+function statusRows(status) {
+	const values = [
+		['APP 支持插件版本', text(status.app_plugin_version, status.app_build || '未知')],
+		['设备编号（只读）', text(status.device_id, '不可用')],
+		['官方服务器', text(status.broker, '设备编号不可用')],
+		['局域网运行状态', localStatusLabel(status)],
+		['官方云端远程管理运行状态', statusLabel(status)],
+		['MQTT 会话建立时间', formatTimestamp(status.bridge_session_started)],
+		['MQTT 会话年龄 / 轮换周期',
+			formatDuration(status.bridge_session_age) + ' / ' +
+			formatDuration(status.bridge_reconnect_interval)],
+		['本次开机主动重连次数', String(Number(status.bridge_reconnect_count) || 0)],
+		['快照缓存状态', cacheStatusLabel(status)],
+		['最近成功预热', formatTimestamp(status.cache_last_success)],
+		['最近预热耗时', String(Number(status.cache_elapsed_ms) || 0) + ' 毫秒'],
+		['本页状态读取时间', formatTimestamp(status.status_updated)]
+	];
+	return values.map(function(item) {
+		return E('tr', {}, [
+			E('td', { 'class': 'td left', 'style': 'width:34%' }, item[0]),
+			E('td', { 'class': 'td left', 'style': 'overflow-wrap:anywhere' }, item[1])
+		]);
+	});
+}
+
 return view.extend({
 	load: function() {
 		return L.resolveDefault(callStatus(), {});
@@ -314,16 +366,46 @@ return view.extend({
 		window.setTimeout(function() { window.location.reload(); }, 1500);
 	},
 
+	refreshStatus: async function() {
+		const button = document.getElementById('c2000max-app-refresh');
+		button.disabled = true;
+		try {
+			const status = await callStatus();
+			if (!status || typeof status.local_enable !== 'boolean')
+				throw new Error('APP 状态响应不完整');
+			const table = document.getElementById('c2000max-app-status');
+			while (table.firstChild)
+				table.removeChild(table.firstChild);
+			statusRows(status).forEach(function(row) { table.appendChild(row); });
+			// Update only diagnostics: unsaved switches, periods and the risk
+			// confirmation baseline must not be overwritten by a status read.
+		} catch (error) {
+			ui.addNotification(null, E('p', {},
+				'无法刷新 APP 运行状态，请稍后重试。'), 'error');
+		} finally {
+			button.disabled = false;
+		}
+	},
+
 	render: function(status) {
 		this.currentStatus = status;
-		const masterOptions = OPTIONS.slice(0, 3).map(function(option) {
+		const isMaster = function(option) {
+			return option.name === 'local_enable' || option.name === 'remote_enable';
+		};
+		const isLocal = function(option) {
+			return !isMaster(option) && (option.name.indexOf('local_') === 0 ||
+				option.name === 'password_enable' || option.name === 'reboot_enable');
+		};
+		const masterOptions = OPTIONS.filter(isMaster).map(function(option) {
 			return optionRow(option, status);
 		});
 		masterOptions.push(protocolRow(status));
-		const localOptions = OPTIONS.slice(3, 14).map(function(option) {
+		const localOptions = OPTIONS.filter(isLocal).map(function(option) {
 			return optionRow(option, status);
 		});
-		const cloudOptions = OPTIONS.slice(14).map(function(option) {
+		const cloudOptions = OPTIONS.filter(function(option) {
+			return !isMaster(option) && !isLocal(option);
+		}).map(function(option) {
 			return optionRow(option, status);
 		});
 		const refreshOptions = INTERVALS.map(function(option) {
@@ -345,7 +427,7 @@ return view.extend({
 			E('div', { 'class': 'cbi-map-descr' },
 				'局域网和云端总开关默认关闭；下方功能权限已默认开启，' +
 				'启用对应总开关即可使用。当前界面：' +
-				text(status.app_build, 'V36.10') + '。'),
+				text(status.app_plugin_version, status.app_build || '未知') + '。'),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, '总开关')
 			].concat(masterOptions)),
@@ -363,49 +445,20 @@ return view.extend({
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, '数据刷新与缓存'),
 				E('div', { 'class': 'cbi-section-descr' },
-					'数值越小，APP 返回的数据越新，但蜂窝模块和 CPU 查询更频繁。')
+					'保留现有刷新设置。APP 3.2 自身也有约 1.5 秒的页面数据缓存，' +
+					'调小这里的时间不会强制 APP 更频繁发送请求。' +
+					'信号和载波采样共用串行模组查询，过低会增加负载；云端周期仅在远程管理开启时生效。')
 			].concat(refreshOptions)),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, '设备身份与状态'),
-				E('table', { 'class': 'table' }, [
-					E('tr', {}, [
-						E('td', { 'class': 'td left', 'width': '34%' },
-							'设备编号（只读）'),
-						E('td', { 'class': 'td left' },
-							text(status.device_id, '不可用'))
-					]),
-					E('tr', {}, [
-						E('td', { 'class': 'td left' }, '官方服务器'),
-						E('td', { 'class': 'td left' },
-							text(status.broker, '设备编号不可用'))
-					]),
-					E('tr', {}, [
-						E('td', { 'class': 'td left' }, '局域网运行状态'),
-						E('td', { 'class': 'td left' },
-							localStatusLabel(status))
-					]),
-					E('tr', {}, [
-						E('td', { 'class': 'td left' },
-							'官方云端远程管理运行状态'),
-						E('td', { 'class': 'td left' }, statusLabel(status))
-					]),
-					E('tr', {}, [
-						E('td', { 'class': 'td left' }, 'MQTT 会话建立时间'),
-						E('td', { 'class': 'td left' },
-							formatTimestamp(status.bridge_session_started))
-					]),
-					E('tr', {}, [
-						E('td', { 'class': 'td left' }, 'MQTT 会话年龄 / 轮换周期'),
-						E('td', { 'class': 'td left' },
-							formatDuration(status.bridge_session_age) + ' / ' +
-							formatDuration(status.bridge_reconnect_interval))
-					]),
-					E('tr', {}, [
-						E('td', { 'class': 'td left' }, '本次开机主动重连次数'),
-						E('td', { 'class': 'td left' },
-							String(Number(status.bridge_reconnect_count) || 0))
-					])
-				])
+				E('div', { 'class': 'cbi-section-descr' },
+					'“最近成功预热”是后台检查完成时间，不是每项数据的采样时间；闲置检查不会更新它。'),
+				E('table', { 'id': 'c2000max-app-status', 'class': 'table' }, statusRows(status)),
+				E('button', {
+					'id': 'c2000max-app-refresh',
+					'class': 'btn cbi-button cbi-button-neutral',
+					'click': ui.createHandlerFn(this, this.refreshStatus)
+				}, '刷新运行状态（保留未保存设置）')
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {

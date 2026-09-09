@@ -131,10 +131,10 @@ function M.decode(body)
 	end
 
 	if type(outer.data) == "string" then
-		-- The current official APP (v5 family) uses DES-ECB with its
-		-- built-in eight-byte protocol key. Try that exact format first.
-		-- The older AES formats below remain available for installed
-		-- legacy APP versions.
+		-- The 2.x-compatible path uses DES-ECB. APP 3.1 and 3.2 retain
+		-- both DES and AES and select them from the /signal probe; the
+		-- application version is not the wire-protocol version. Try DES
+		-- first for this envelope, then the verified AES key candidates.
 		if outer.random == nil then
 			local current_plain = crypt_current("decrypt", outer.data)
 			local current_decoded = current_plain and

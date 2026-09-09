@@ -66,7 +66,9 @@ fm350_netmask_to_prefix()
 
 fm350_dotted_ipv6()
 {
-	awk -v value="$1" '
+	# Optional syntax-only mode lets a caller distinguish a valid zero
+	# address (not connected yet) from malformed input. Default is unchanged.
+	awk -v value="$1" -v allow_zero="${2:-0}" '
 	BEGIN {
 		n = split(value, byte, ".")
 		if (n != 16)
@@ -78,7 +80,7 @@ fm350_dotted_ipv6()
 			if (byte[i] != 0)
 				nonzero = 1
 		}
-		if (!nonzero)
+		if (!nonzero && !allow_zero)
 			exit 1
 		for (i = 1; i <= 16; i += 2) {
 			if (i > 1)
@@ -91,7 +93,7 @@ fm350_dotted_ipv6()
 
 fm350_colon_ipv6()
 {
-	awk -v value="$1" '
+	awk -v value="$1" -v allow_zero="${2:-0}" '
 	BEGIN {
 		if (value !~ /^[0-9A-Fa-f:]+$/)
 			exit 1
@@ -116,7 +118,7 @@ fm350_colon_ipv6()
 				nonzero = 1
 		}
 		if ((double_colons == 0 && nonempty != 8) ||
-		    (double_colons == 1 && nonempty >= 8) || !nonzero)
+		    (double_colons == 1 && nonempty >= 8) || (!nonzero && !allow_zero))
 			exit 1
 		print tolower(value)
 	}'

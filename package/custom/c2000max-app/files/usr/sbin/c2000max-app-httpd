@@ -15,6 +15,7 @@ local ACTIONS = {
 	signal = true,
 	cmd = true,
 	info = true,
+	led = true,
 	wifi = true,
 	cpesel = true,
 	client = true,

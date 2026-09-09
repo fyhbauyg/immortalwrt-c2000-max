@@ -1,5 +1,11 @@
 . /lib/functions/uci-defaults.sh
 
+# C2000MAX exposes the official SPI environment read-only for diagnostics.
+# Its separate TF environment stores SIM state, not generic owrt_* defaults;
+# c2000max-sim resolves it from /rom with SD and partition-size checks.
+# Do not import either environment into first-boot account/network defaults.
+[ "$(board_name)" = "nradio,c2000-max" ] && exit 0
+
 fw_loadenv
 
 board_config_update

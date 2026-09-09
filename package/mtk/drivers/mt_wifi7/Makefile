@@ -7,12 +7,15 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt_wifi7
+PKG_RELEASE:=3
 P4REV:=
-PKG_SOURCE_DATE:=2025-06-13
-PKG_SOURCE_VERSION:=415824
-PKG_SOURCE:=mt7993_20250613-415824.tar.xz
-PKG_SOURCE_URL:=https://github.com/chasey-dev/objs/releases/download/v1
-PKG_HASH:=e2900a672a5151aed85f6711240db1ddcf5eed317fd620485a0ee6aee060cfb4
+# Experimental paired MT7993 source from the Deco BE25-5G public GPL.
+# This is not the unavailable MediaTek 39602c SDK release.
+PKG_SOURCE_DATE:=2026-07-27
+PKG_SOURCE_VERSION:=765c6bef
+PKG_SOURCE:=c2000max-deco-wifi-765c6bef-source.tar.xz
+PKG_SOURCE_URL:=file://$(TOPDIR)/local-sources
+PKG_HASH:=847e6794beb86713fc9ab08f620e78dca3b537bb1677960937f6ec66a430ccd3
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)
 
 PKG_KCONFIG:= \
@@ -298,7 +301,8 @@ PKG_KCONFIG:= \
 	UNIFIED_COUNTRY_CONFIG_SUPPORT \
 	SINGLE_SKU_EXT
 
-PKG_CONFIG_DEPENDS:=$(foreach c, $(PKG_KCONFIG),$(if $(CONFIG_MTK_WIFI7_$c),CONFIG_$(c)))
+PKG_CONFIG_DEPENDS:=$(foreach c,$(PKG_KCONFIG),CONFIG_MTK_WIFI7_$(c))
+PKG_CONFIG_DEPENDS+=$(sort $(filter CONFIG_MTK_HWIFI_% CONFIG_EN_HWIFI_%,$(.VARIABLES)))
 
 PKG_BUILD_PARALLEL:=1
 
@@ -396,7 +400,6 @@ define Build/Compile
 		CFG_CFG80211_VERSION:=$(word 2,$(subst -, ,$(BACKPORT_VERSION))) \
 		KBUILD_EXTRA_SYMBOLS="$(wildcard $(PKG_SYMVERS_DIR)/*.symvers)" \
 		modules
-	touch $(PKG_BUILD_DIR)/.no_autorebuild
 endef
 
 define KernelPackage/mt_wifi7/install

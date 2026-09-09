@@ -1,0 +1,261 @@
+--- a/mt_wifi/hw_ctrl/ee_flash.c
++++ b/mt_wifi/hw_ctrl/ee_flash.c
+@@ -33,13 +33,13 @@
+ #define flash_read(_ctrl, _ptr, _offset, _len) mt_eeprom_read_wifi(_offset, (size_t)_len, _ptr)
+ #define flash_write(_ctrl, _ptr, _offset, _len) mt_eeprom_write_wifi(_offset, (size_t)_len, _ptr)
+ 
+-void RtmpFlashRead(
++INT RtmpFlashRead(
+ 	void *hdev_ctrl,
+ 	UCHAR *p,
+ 	ULONG a,
+ 	ULONG b)
+ {
+-	flash_read(hdev_ctrl, p, a, b);
++	return flash_read(hdev_ctrl, p, a, b);
+ }
+ 
+ void RtmpFlashWrite(
+@@ -52,7 +52,7 @@
+ }
+ 
+ 
+-static NDIS_STATUS rtmp_ee_flash_init(PRTMP_ADAPTER pAd, PUCHAR start);
++static NDIS_STATUS rtmp_ee_flash_init(PRTMP_ADAPTER pAd);
+ 
+ BOOLEAN rtmp_ee_init_check(struct _RTMP_ADAPTER *ad)
+ {
+@@ -339,63 +339,19 @@
+ }
+ 
+ 
+-static NDIS_STATUS rtmp_ee_flash_init(PRTMP_ADAPTER pAd, PUCHAR start)
++static NDIS_STATUS rtmp_ee_flash_init(PRTMP_ADAPTER pAd)
+ {
+ 	struct _RTMP_CHIP_CAP *cap = hc_get_chip_cap(pAd->hdev_ctrl);
+-	struct physical_device *ph_dev = pAd->physical_dev;
+-	UINT32 addrH_offset[] = {EEPROM_BAND0_MAC0, EEPROM_BAND1_MAC0, EEPROM_BAND2_MAC0};
+-	UINT32 addrM_offset[] = {EEPROM_BAND0_MAC1, EEPROM_BAND1_MAC1, EEPROM_BAND2_MAC1};
+-	UINT32 addrT_offset[] = {EEPROM_BAND0_MAC2, EEPROM_BAND1_MAC2, EEPROM_BAND2_MAC2};
+-	UCHAR  zero_mac[MAC_ADDR_LEN]  = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+-	UCHAR  band_H[] = {0x0, 0x8, 0xc};
+-	UINT8 bandIdx = hc_get_hw_band_idx(pAd);
+ 
+ 	cap->ee_inited = 1;
+ 	pAd->bRandomMac = 0;
+ 
+ 	if (validFlashEepromID(pAd) == FALSE) {
+-		if (rtmp_ee_flash_reset(pAd, start) != NDIS_STATUS_SUCCESS) {
+-			MTWF_DBG(pAd, DBG_CAT_FW, CATFW_EFUSE, DBG_LVL_ERROR,
+-				"rtmp_ee_init(): failed\n");
+-			return NDIS_STATUS_FAILURE;
+-		}
+-
+-		/* Random number for the last bytes of MAC address*/
+-		{
+-			USHORT  Addr[3];
+-			UCHAR   zeroMac[6] = {0};
+-
+-			rtmp_ee_flash_read(pAd, addrH_offset[bandIdx], &(Addr[0]));
+-			rtmp_ee_flash_read(pAd, addrM_offset[bandIdx], &(Addr[1]));
+-			rtmp_ee_flash_read(pAd, addrT_offset[bandIdx], &(Addr[2]));
+-
+-			if (MAC_ADDR_EQUAL(Addr, zero_mac) && !(IS_BELLWETHER(pAd))) {
+-				rtmp_ee_flash_read(pAd, addrH_offset[0], &(Addr[0]));
+-				rtmp_ee_flash_read(pAd, addrM_offset[0], &(Addr[1]));
+-				rtmp_ee_flash_read(pAd, addrT_offset[0], &(Addr[2]));
+-				Addr[0] = Addr[0] | band_H[bandIdx];
+-				*(UINT16 *)(&ph_dev->EEPROMImage[addrH_offset[bandIdx]]) = le2cpu16(Addr[0]);
+-				*(UINT16 *)(&ph_dev->EEPROMImage[addrM_offset[bandIdx]]) = le2cpu16(Addr[1]);
+-			}
+-
+-
+-			Addr[2] = Addr[2] & 0xff;
+-			Addr[2] = Addr[2] | (RandomByte(pAd) & 0xf8) << 8;
+-			/* do not random mac again to avoid mac address inconsistent at eagle */
+-			if (!NdisEqualMemory(zeroMac, pAd->CurrentAddress, MAC_ADDR_LEN))
+-				Addr[2] = *(UINT16 *)&pAd->CurrentAddress[4];
+-			*(UINT16 *)(&ph_dev->EEPROMImage[addrT_offset[bandIdx]]) = le2cpu16(Addr[2]);
+-			pAd->bRandomMac = 1;
+-			MTWF_DBG(pAd, DBG_CAT_FW, CATFW_EFUSE, DBG_LVL_WARN,
+-				"The EEPROM in Flash is wrong, use default\n");
+-		}
+-		/*write back all to flash, legacy implementation*/
+-		rtmp_ee_flash_write_all(pAd);
+-
+-		if (validFlashEepromID(pAd) == FALSE) {
+-			MTWF_DBG(pAd, DBG_CAT_FW, CATFW_EFUSE, DBG_LVL_ERROR, "invalid eeprom\n");
+-			return NDIS_STATUS_FAILURE;
+-		}
++		/* FLASH calibration is identity-bound; never synthesize or write it. */
++		cap->ee_inited = 0;
++		MTWF_DBG(pAd, DBG_CAT_FW, CATFW_EFUSE, DBG_LVL_ERROR,
++			"Invalid FLASH EEPROM, initialization stopped\n");
++		return NDIS_STATUS_FAILURE;
+ 	}
+ 
+ 	return NDIS_STATUS_SUCCESS;
+@@ -407,8 +363,10 @@
+ 	EEPROM_CONTROL *pE2pCtrl = PD_GET_E2P_CTRL_PTR(pAd->physical_dev);
+ 	struct physical_device *ph_dev = pAd->physical_dev;
+ 	struct _RTMP_CHIP_CAP *cap = NULL;
++	INT ret;
+ 
+ 	cap = hc_get_chip_cap(pAd->hdev_ctrl);
++	cap->ee_inited = 0;
+ 
+ 	MTWF_DBG(pAd, DBG_CAT_FW, CATFW_EFUSE, DBG_LVL_INFO, "\n");
+ 	/*
+@@ -425,15 +383,24 @@
+ 
+ 	if (ph_dev->EEPROMImage) {
+ 		NdisZeroMemory(ph_dev->EEPROMImage, get_dev_eeprom_size(ph_dev));
+-		RtmpFlashRead(pAd->hdev_ctrl, ph_dev->EEPROMImage,
++		ret = RtmpFlashRead(pAd->hdev_ctrl, ph_dev->EEPROMImage,
+ 			get_dev_eeprom_offset(ph_dev), get_dev_eeprom_size(ph_dev));
++		if (ret) {
++			MTWF_DBG(pAd, DBG_CAT_FW, CATFW_EFUSE, DBG_LVL_ERROR,
++				"FLASH EEPROM read failed: %d\n", ret);
++			return NDIS_STATUS_FAILURE;
++		}
++
++		ret = rtmp_ee_flash_init(pAd);
++		if (ret != NDIS_STATUS_SUCCESS)
++			return ret;
+ 
+ 		if (ph_dev->chip_op->prek_preinit)
+ 			ph_dev->chip_op->prek_preinit(pAd);
+ 
+ 		pE2pCtrl->e2pCurMode = E2P_FLASH_MODE;
+ 		pE2pCtrl->e2pSource = E2P_SRC_FROM_FLASH;
+-		return rtmp_ee_flash_init(pAd, ph_dev->EEPROMImage);
++		return NDIS_STATUS_SUCCESS;
+ 	} else {
+ 		MTWF_DBG(pAd, DBG_CAT_INIT, CATINIT_EEPROM, DBG_LVL_ERROR,
+ 			"Allocate %d-byte-of EEPROMImage failed.\n",
+--- a/mt_wifi/hw_ctrl/eeprom.c
++++ b/mt_wifi/hw_ctrl/eeprom.c
+@@ -201,13 +201,14 @@
+ 	return TRUE;
+ }
+ 
+-VOID rtmp_read_eeprom_for_cal(
++INT rtmp_read_eeprom_for_cal(
+ 	struct _RTMP_ADAPTER *mac_ad)
+ {
+ #ifdef PRE_CAL_TRX_SET2_SUPPORT
+ 	UINT16 PreCalSize;
+ #endif /* PRE_CAL_TRX_SET2_SUPPORT */
+ 	struct _RTMP_CHIP_OP *ops = hc_get_chip_ops(mac_ad->hdev_ctrl);
++	INT ee_status;
+ #if defined(PRE_CAL_TRX_SET2_SUPPORT) || \
+ 	defined(PRE_CAL_MT7915_SUPPORT) || defined(PRE_CAL_MT7986_SUPPORT) || \
+ 	defined(PRE_CAL_MT7981_SUPPORT) || defined(PRE_CAL_MT7916_SUPPORT) || \
+@@ -227,7 +228,14 @@
+ 		BOOLEAN bCalFree = FALSE;
+ #endif
+ 		/* If we are run in Multicard mode */
+-		ops->eeinit(mac_ad);
++		ee_status = ops->eeinit(mac_ad);
++		if (PD_GET_E2P_ACCESS_MODE(ph_dev) == E2P_FLASH_MODE &&
++			ee_status != NDIS_STATUS_SUCCESS) {
++			hc_get_chip_cap(mac_ad->hdev_ctrl)->ee_inited = 0;
++			MTWF_DBG(mac_ad, DBG_CAT_HW, CATHW_EEPROM, DBG_LVL_ERROR,
++				"FLASH EEPROM initialization failed\n");
++			return -EIO;
++		}
+ #ifdef CAL_FREE_IC_SUPPORT
+ 		RTMP_CAL_FREE_IC_CHECK(mac_ad, bCalFree);
+ 		if (bCalFree) {
+@@ -416,11 +424,18 @@
+ 			} else {
+ 				/* Read pre-cal data from flash and store to pre-cal buffer*/
+ #ifdef RTMP_FLASH_SUPPORT
+-				if (PD_GET_E2P_ACCESS_MODE(mac_ad->physical_dev) == E2P_FLASH_MODE)
+-					RtmpFlashRead(mac_ad->hdev_ctrl,
++				if (PD_GET_E2P_ACCESS_MODE(mac_ad->physical_dev) == E2P_FLASH_MODE) {
++					ret_cal_data = RtmpFlashRead(mac_ad->hdev_ctrl,
+ 						mac_ad->PreCalReStoreBuffer,
+ 						get_dev_eeprom_offset(ph_dev) + PRECALPART_OFFSET,
+ 						PreCalSize);
++					if (ret_cal_data) {
++						hc_get_chip_cap(mac_ad->hdev_ctrl)->ee_inited = 0;
++						os_free_mem(mac_ad->PreCalReStoreBuffer);
++						mac_ad->PreCalReStoreBuffer = NULL;
++						return ret_cal_data;
++					}
++				}
+ #endif /* RTMP_FLASH_SUPPORT */
+ 				if (PD_GET_E2P_ACCESS_MODE(mac_ad->physical_dev) == E2P_BIN_MODE) {
+ 					ret_cal_data = rtmp_cal_load_from_bin(
+@@ -467,6 +482,7 @@
+ 		MtCmdEfusBufferModeSet(mac_ad, PD_GET_EEPROM_TYPE(ph_dev));
+ 	}
+ #endif /* MT_MAC */
++	return 0;
+ }
+ 
+ /*
+--- a/mt_wifi/hw_ctrl/hdev_ctrl.c
++++ b/mt_wifi/hw_ctrl/hdev_ctrl.c
+@@ -2536,7 +2536,10 @@
+ 		ctrl->hdev_ops->fwdl(mac_ad, TRUE);
+ 		break;
+ 	case FWDL_ACTION_RFCAL:
+-		rtmp_read_eeprom_for_cal(mac_ad);
++		ret = rtmp_read_eeprom_for_cal(mac_ad);
++		if (ret)
++			MTWF_DBG(NULL, DBG_CAT_HW, CATHW_HDEV_CTRL, DBG_LVL_ERROR,
++				"FLASH EEPROM calibration stopped: %d\n", ret);
+ 		break;
+ 	case FWDL_ACTION_OPT_OFF:
+ 		MTWF_DBG(NULL, DBG_CAT_HW, CATHW_HDEV_CTRL, DBG_LVL_NOTICE,
+--- a/mt_wifi/hw_ctrl/hwifi_main.c
++++ b/mt_wifi/hw_ctrl/hwifi_main.c
+@@ -497,8 +497,13 @@
+ 	MTWF_DBG(ad, DBG_CAT_INIT, CATINTF_UP, DBG_LVL_NOTICE, "MAC Init Done!\n");
+ 
+ 	/*efuse system initial*/
+-	if (!is_efuse_ready(ad))
+-		rtmp_read_eeprom_for_cal(ad);
++	if (!is_efuse_ready(ad) ||
++		(PD_GET_E2P_ACCESS_MODE(ad->physical_dev) == E2P_FLASH_MODE &&
++		 !hc_get_chip_cap(ad->hdev_ctrl)->ee_inited)) {
++		ret = rtmp_read_eeprom_for_cal(ad);
++		if (ret)
++			goto err;
++	}
+ 	ret = WfEPROMSysInit(ad, true);
+ 	if (ret)
+ 		goto err;
+@@ -2547,7 +2552,7 @@
+ 	if (chip_op->ready_for_fwdl
+ 		&& chip_op->ready_for_fwdl(opt_type, probe_count)) {
+ 		hwifi_fwdl(mac_ad, FALSE);
+-		rtmp_read_eeprom_for_cal(mac_ad);
++		return rtmp_read_eeprom_for_cal(mac_ad);
+ 	}
+ 	return 0;
+ }
+--- a/mt_wifi/include/eeprom.h
++++ b/mt_wifi/include/eeprom.h
+@@ -2628,7 +2628,7 @@
+ 
+ INT show_bandinfo_proc(struct _RTMP_ADAPTER *pAd, RTMP_STRING *arg);
+ 
+-VOID rtmp_read_eeprom_for_cal(struct _RTMP_ADAPTER *mac_ad);
++INT rtmp_read_eeprom_for_cal(struct _RTMP_ADAPTER *mac_ad);
+ 
+ #if defined(PRE_CAL_TRX_SET1_SUPPORT) || defined(PRE_CAL_TRX_SET2_SUPPORT) || defined(RLM_CAL_CACHE_SUPPORT)
+ NDIS_STATUS rtmp_cal_load_from_bin(
+--- a/mt_wifi/include/rt_os_util.h
++++ b/mt_wifi/include/rt_os_util.h
+@@ -407,7 +407,7 @@
+ 	IN	UINT32					ReqVarIELen);
+ 
+ #if defined(RTMP_RBUS_SUPPORT) || defined(RTMP_FLASH_SUPPORT)
+-void RtmpFlashRead(
++INT RtmpFlashRead(
+ 	void *hdev_ctrl,
+ 	UCHAR *p,
+ 	ULONG a,

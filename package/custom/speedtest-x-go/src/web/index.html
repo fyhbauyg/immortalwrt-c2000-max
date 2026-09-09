@@ -5,7 +5,7 @@
 	<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 	<title>C2000-MAX 内网测速</title>
 	<link rel="stylesheet" href="style.css">
-	<script src="speedtest.js"></script>
+	<script src="speedtest.js?v=1.2.0"></script>
 </head>
 <body>
 	<main>
@@ -13,46 +13,62 @@
 			<div>
 				<p class="eyebrow">C2000-MAX · SPEEDTEST-X</p>
 				<h1>内网测速</h1>
-				<p class="subtitle">直接测试终端与路由器之间的局域网吞吐、延迟和抖动。</p>
+				<p class="subtitle">测试终端与路由器之间的实际应用层吞吐。</p>
 			</div>
 			<a class="history" href="results.html">测速记录</a>
 		</header>
 
-		<p class="reference-notice">结果仅供参考：此内网测速链路不经过路由器网络加速，速度可能与实际转发或上网速度存在差异。</p>
+		<p class="reference-notice">测试终端与路由器本机的吞吐，不代表 HNAT 转发或 Wi-Fi 协商速率。下载按终端实收、上传按路由器固定时段实收计量，无速率补偿。请保持页面在前台，暂停其他测速和下载。</p>
 
 		<section class="panel">
+			<fieldset id="settings" class="test-settings">
+				<legend>测试设置</legend>
+				<label>每方向采样时长 <select id="duration"><option value="10">10 秒</option><option value="15" selected>15 秒</option><option value="30">30 秒</option></select></label>
+				<label>并行连接数 <select id="streams"><option value="1">1 条（单连接）</option><option value="4" selected>4 条（推荐）</option><option value="6">下载 6 条 / 上传 5 条</option></select></label>
+			</fieldset>
 			<button id="startStop" type="button">开始测速</button>
 			<div class="progress"><i id="progress"></i></div>
+			<p id="testStatus" class="test-status" role="status" aria-live="polite">就绪 · 预热不计入结果，上传不把末尾确认等待算入采样。</p>
+			<p id="testWarning" class="test-status" role="status" hidden></p>
 			<div class="metrics">
 				<div><span>下载</span><strong id="download">0.00</strong><small>Mbps</small></div>
 				<div><span>上传</span><strong id="upload">0.00</strong><small>Mbps</small></div>
-				<div><span>延迟</span><strong id="ping">0.00</strong><small>ms</small></div>
-				<div><span>抖动</span><strong id="jitter">0.00</strong><small>ms</small></div>
+				<div><span>HTTP 往返延迟</span><strong id="ping">0.00</strong><small>ms</small></div>
+				<div><span>HTTP 往返抖动</span><strong id="jitter">0.00</strong><small>ms</small></div>
 			</div>
 			<p class="client">客户端：<span id="client">等待测速</span></p>
+			<p id="measurement" class="client measurement"></p>
 		</section>
 
 		<footer>
 			基于 <a href="https://github.com/MortyFx/speedtest-x">Speedtest-X</a> /
-			<a href="https://github.com/librespeed/speedtest">LibreSpeed</a>，后端由轻量 Go 服务实现。
+			<a href="https://github.com/librespeed/speedtest">LibreSpeed</a> 界面接口 · C2000-MAX 测量引擎 1.2.0
 		</footer>
 	</main>
 
 	<script>
 	'use strict';
-	var test = new Speedtest();
+	var test;
 	var running = false;
 	var last = {};
+	var stopReason = '';
 	var button = document.getElementById('startStop');
-
-	test.setParameter('getIp_ispInfo', true);
-	test.setParameter('telemetry_level', 'disabled');
+	var statusNode = document.getElementById('testStatus');
+	var settings = document.getElementById('settings');
+	var phases = {
+		idle: '就绪', check: '检查测速服务版本', ip: '识别客户端', ping: '测量 HTTP 往返延迟',
+		'download-warmup': '下载预热（不计入结果）', download: '测量下载',
+		'upload-warmup': '上传预热（连接持续传输，不计入结果）', upload: '测量上传（路由器固定时段实收）',
+		'upload-drain': '等待路由器确认最后一批上传（计入实际耗时）',
+		done: '测试完成 · 实际应用层平均吞吐，无速率补偿',
+		error: '测试失败，结果无效', cancelled: '测试已停止，结果无效'
+	};
 
 	function value(id, input, fallback) {
 		document.getElementById(id).textContent = (input === '' || input == null) ? fallback : input;
 	}
 
-	test.onupdate = function(data) {
+	function update(data) {
 		last = data || {};
 		value('download', data.dlStatus, '0.00');
 		value('upload', data.ulStatus, '0.00');
@@ -61,15 +77,39 @@
 		value('client', data.clientIp, '正在识别');
 		var p = (Number(data.dlProgress) * 2 + Number(data.ulProgress) * 2 + Number(data.pingProgress)) / 5;
 		document.getElementById('progress').style.width = Math.max(0, Math.min(100, p * 100)) + '%';
-	};
+		statusNode.textContent = stopReason || (data.error ? '测速失败：' + data.error : phases[data.phase]) || '正在测速';
+		statusNode.classList.toggle('error', !!data.error);
+		var warningNode = document.getElementById('testWarning');
+		warningNode.textContent = data.warning || '';
+		warningNode.hidden = !data.warning;
+		if (data.testState === 4 && data.measurements) {
+			var lines = [];
+			[['download', '下载'], ['upload', '上传']].forEach(function(item) {
+				var m = data.measurements[item[0]];
+				if (m && Number.isFinite(m.elapsedSeconds) && Number.isFinite(m.bytes))
+					lines.push(item[1] + ' ' + m.elapsedSeconds.toFixed(2) + ' 秒 / ' + (m.bytes / 1048576).toFixed(1) + ' MiB');
+			});
+			document.getElementById('measurement').textContent = lines.join(' · ');
+		}
+	}
 
-	test.onend = function(aborted) {
+	function ended(aborted) {
 		running = false;
+		settings.disabled = false;
 		button.textContent = '再次测速';
 		button.classList.remove('running');
-		if (aborted)
+		document.body.classList.remove('testing');
+		var validRates = [last.dlStatus, last.ulStatus].every(function(rate) {
+			return /^\d+(\.\d+)?$/.test(String(rate)) && Number.isFinite(Number(rate));
+		});
+		if (aborted || last.error || last.testState !== 4 || !validRates) {
+			statusNode.textContent = stopReason || (last.error ? '测速失败：' + last.error : '测试已停止，结果无效。');
+			statusNode.classList.add('error');
+			['download', 'upload'].forEach(function(id) { value(id, '—', '—'); });
 			return;
+		}
 		var ipParts = String(last.clientIp || '').split(' - ');
+		var completedTest = test;
 		var body = new URLSearchParams({
 			key: Date.now() + '_' + (ipParts[0] || ''),
 			ip: ipParts[0] || '',
@@ -84,20 +124,51 @@
 			method: 'POST',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 			body: body.toString()
-		}).catch(function() {});
-	};
+		}).then(function(response) {
+			if (!response.ok) throw new Error('history');
+		}).catch(function() { if (!running && test === completedTest) statusNode.textContent += '（记录保存失败）'; });
+	}
 
 	button.addEventListener('click', function() {
 		if (running) {
+			stopReason = '测试已停止，结果无效。';
 			test.abort();
 			return;
 		}
+		if (document.hidden) return;
+		last = {};
+		stopReason = '';
+		test = new Speedtest();
+		var duration = Number(document.getElementById('duration').value);
+		var streams = Number(document.getElementById('streams').value);
+		test.setParameter('time_dl_max', duration);
+		test.setParameter('time_ul_max', duration);
+		test.setParameter('xhr_dlMultistream', streams);
+		test.setParameter('xhr_ulMultistream', Math.min(streams, 5));
+		test.onupdate = update;
+		test.onend = ended;
 		running = true;
+		settings.disabled = true;
 		button.textContent = '停止测速';
 		button.classList.add('running');
+		document.body.classList.add('testing');
+		statusNode.classList.remove('error');
+		statusNode.textContent = '检查测速服务';
+		document.getElementById('measurement').textContent = '';
+		document.getElementById('testWarning').textContent = '';
+		document.getElementById('testWarning').hidden = true;
+		['download', 'upload', 'ping', 'jitter'].forEach(function(id) { value(id, '—', '—'); });
 		document.getElementById('progress').style.width = '0%';
-		test.start();
+		try { test.start(); }
+		catch (error) { last.error = String(error); ended(true); }
 	});
+	document.addEventListener('visibilitychange', function() {
+		if (document.hidden && running) {
+			stopReason = '页面进入后台，已停止测速以避免计时偏差。请回到前台重新测试。';
+			test.abort();
+		}
+	});
+	window.addEventListener('pagehide', function() { if (running) test.abort(); });
 	</script>
 </body>
 </html>

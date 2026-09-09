@@ -1,6 +1,6 @@
 --- a/mt_wifi/common/cmm_sanity.c
 +++ b/mt_wifi/common/cmm_sanity.c
-@@ -2266,6 +2266,7 @@ BOOLEAN PeerProbeReqSanity(
+@@ -2271,6 +2271,7 @@
  	IN ULONG MsgLen,
  	OUT PEER_PROBE_REQ_PARAM * ProbeReqParam)
  {
@@ -8,7 +8,7 @@
  	PFRAME_802_11 Fr = (PFRAME_802_11)Msg;
  	UCHAR		*Ptr;
  	UCHAR		eid = 0, eid_len = 0, *eid_data;
-@@ -2316,11 +2317,28 @@ BOOLEAN PeerProbeReqSanity(
+@@ -2319,11 +2320,28 @@
  	COPY_MAC_ADDR(ProbeReqParam->Addr1, &Fr->Hdr.Addr1);
  #endif
  
@@ -38,7 +38,7 @@
  #ifdef EM_PLUS_SUPPORT
  	if (IS_BROADCAST_MAC_ADDR(ProbeReqParam->Addr1)) {
  		int apidx;
-@@ -2373,8 +2391,8 @@ BOOLEAN PeerProbeReqSanity(
+@@ -2373,8 +2391,8 @@
  	 * call that in certification case. Correct apidex passed in below API.
  	 */
  
@@ -51,7 +51,7 @@
  #ifdef WSC_AP_SUPPORT
 --- a/mt_wifi/common/fsm/fsm_sync.c
 +++ b/mt_wifi/common/fsm/fsm_sync.c
-@@ -2313,7 +2313,7 @@ static VOID ApPeerProbeReqAction(RTMP_ADAPTER *pAd, MLME_QUEUE_ELEM *Elem)
+@@ -2316,7 +2316,7 @@
  
  	NdisZeroMemory(ProbeReqParam, sizeof(PEER_PROBE_REQ_PARAM));
  	if (PeerProbeReqSanity(pAd, Elem->Msg, Elem->MsgLen, ProbeReqParam) == FALSE) {
@@ -62,8 +62,8 @@
  		return;
 --- a/mt_wifi/os/linux/cfg80211/cfg80211_rx.c
 +++ b/mt_wifi/os/linux/cfg80211/cfg80211_rx.c
-@@ -232,7 +232,7 @@ BOOLEAN CFG80211_HandleP2pProbeReq(PRTMP_ADAPTER pAd, struct wifi_dev *wdev,
- 	{
+@@ -235,7 +235,7 @@
+ 	if (pAd->ApCfg.BandSteering) {
  		if (PeerProbeReqSanity(pAd, (VOID *)pRxBlk->pData,
  			pRxBlk->DataSize, ProbeReqParam) == FALSE) {
 -			MTWF_DBG(pAd, DBG_CAT_RX, CATRX_MGMT, DBG_LVL_ERROR,

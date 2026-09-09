@@ -2075,10 +2075,11 @@ assert_argon_v31_resources()
 
 LUCI_BASE_MAKEFILE="$ROOT/../luci-base/Makefile"
 LUCI_LUA_MAKEFILE="$ROOT/../../../feeds/luci/modules/luci-lua-runtime/Makefile"
+EXPECTED_LUCI_BRANCH='PKG_GITBRANCH:=LuCI c2000max-v37.01 branch'
 for luci_makefile in "$LUCI_BASE_MAKEFILE" "$LUCI_LUA_MAKEFILE"; do
 	grep -Fqx 'PKG_SRC_VERSION:=26.248.12024~e9cdc0a' "$luci_makefile" ||
 		fail "LuCI version does not use the requested branch revision: $luci_makefile"
-	grep -Fqx 'PKG_GITBRANCH:=LuCI 37.01-head branch' "$luci_makefile" ||
+	grep -Fqx "$EXPECTED_LUCI_BRANCH" "$luci_makefile" ||
 		fail "LuCI version does not expose the requested C2000MAX branch label: $luci_makefile"
 done
 

@@ -394,7 +394,7 @@ assert_contains "$RPC" 'json_add_string remote_command_message "$remote_command_
 
 VIEW="$LUCI_ROOT/htdocs/luci-static/resources/view/c2000max/app.js"
 assert_contains "$VIEW" 'node.checked = !!checked'
-assert_contains "$VIEW" '鲲鹏无限 3.1+（AES，推荐）'
+assert_contains "$VIEW" '新版加密协议（AES，推荐）'
 assert_contains "$VIEW" "['local_protocol_mode']"
 assert_contains "$VIEW" '设备编号（只读）'
 assert_contains "$VIEW" "name: 'local_device_enable'"
@@ -408,7 +408,8 @@ assert_not_contains "$VIEW" "'checked': checked"
 assert_not_contains "$VIEW" "'c2000max-app-device-id'"
 assert_contains "$VIEW" '局域网和云端总开关默认关闭'
 assert_contains "$VIEW" '当前界面：'
-assert_contains "$VIEW" "text(status.app_build, 'V36.10')"
+assert_contains "$VIEW" "['APP 支持插件版本', text(status.app_plugin_version, status.app_build || '未知')]"
+assert_not_contains "$VIEW" "text(status.app_build, 'V36.10')"
 assert_contains "$VIEW" '软件更新权限'
 assert_contains "$VIEW" '永久关闭'
 assert_not_contains "$VIEW" "name: 'upgrade_enable'"
@@ -562,8 +563,12 @@ assert_contains "$REMOTE" 'core.note_activity()'
 
 MAKEFILE="$ROOT/Makefile"
 assert_contains "$MAKEFILE" '+mosquitto-nossl'
-assert_contains "$MAKEFILE" 'PKG_VERSION:=1.10.0'
-assert_contains "$MAKEFILE" 'PKG_RELEASE:=16'
+assert_contains "$MAKEFILE" 'PKG_VERSION:=1.11.0'
+assert_contains "$MAKEFILE" 'PKG_RELEASE:=2'
+assert_contains "$MAKEFILE" 'c2000max_app/led.lua'
+assert_contains "$CORE" 'elseif action == "led" then'
+assert_contains "$CORE" '"local_led_enable"'
+assert_contains "$CORE" '"remote_led_enable"'
 for dependency in '+flock' '+blkid' '+ip-full' '+iw' '+uclient-fetch'; do
 	assert_contains "$MAKEFILE" "$dependency"
 done
@@ -579,7 +584,7 @@ assert_not_contains "$MAKEFILE" 'app_v30.js $(1)'
 LUCI_MAKEFILE="$LUCI_ROOT/Makefile"
 assert_contains "$LUCI_MAKEFILE" 'LUCI_TITLE:=LuCI configuration for C2000-MAX APP support'
 assert_contains "$LUCI_MAKEFILE" 'LUCI_DEPENDS:=+c2000max-app'
-assert_contains "$LUCI_MAKEFILE" 'PKG_RELEASE:=9'
+assert_contains "$LUCI_MAKEFILE" 'PKG_RELEASE:=10'
 assert_contains "$LUCI_MAKEFILE" '# call BuildPackage - OpenWrt buildroot signature'
 assert_contains "$ACL" '"c2000max_app": [ "set", "restart" ]'
 

@@ -1,0 +1,55 @@
+{
+  "targetName": "c2000_wan",
+  "samples": [
+    {
+      "code": "0",
+      "trans_id": "fixture-one",
+      "result": {
+        "name": "c2000_wan",
+        "available": true,
+        "device": "pppoe-uplink",
+        "ifindex": 18,
+        "source": "sysfs-interface-counters",
+        "direction": "device-tx-rx",
+        "unit": "bytes",
+        "updated": 100,
+        "rx_bytes": 8192000,
+        "tx_bytes": 1024000,
+        "rx_packets": 400,
+        "tx_packets": 300,
+        "list": [ { "name": "c2000_wan", "upload": 1024000, "download": 8192000 } ]
+      }
+    },
+    {
+      "code": "0",
+      "trans_id": "fixture-two",
+      "result": {
+        "name": "c2000_wan",
+        "available": true,
+        "device": "pppoe-uplink",
+        "ifindex": 18,
+        "source": "sysfs-interface-counters",
+        "direction": "device-tx-rx",
+        "unit": "bytes",
+        "updated": 103,
+        "rx_bytes": 11192000,
+        "tx_bytes": 1624000,
+        "rx_packets": 2400,
+        "tx_packets": 700,
+        "list": [ { "name": "c2000_wan", "upload": 1624000, "download": 11192000 } ]
+      }
+    }
+  ],
+  "unavailable": {
+    "code": "2",
+    "trans_id": "fixture-unavailable",
+    "message": "interface counters unavailable",
+    "result": {
+      "name": "c2000_wan",
+      "available": false,
+      "source": "sysfs-interface-counters",
+      "reason": "interface counters unavailable",
+      "list": []
+    }
+  }
+}

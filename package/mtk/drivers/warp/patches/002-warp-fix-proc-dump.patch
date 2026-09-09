@@ -1,6 +1,6 @@
 --- a/warp_proc.c
 +++ b/warp_proc.c
-@@ -453,6 +453,11 @@ warp_proc_ctrl_write(struct file *file,
+@@ -444,6 +444,11 @@ warp_proc_ctrl_write(struct file *file,
  	char *s = value;
  	struct warp_entry *warp = (struct warp_entry *)PDE_DATA(file_inode(file));
  
@@ -12,7 +12,7 @@
  	if (buff && !copy_from_user(value, buff, len1)) {
  		token = strsep(&s, " ");
  		type = warp_str_tol(token, &end, 10);
-@@ -464,6 +469,7 @@ warp_proc_ctrl_write(struct file *file,
+@@ -455,6 +460,7 @@ warp_proc_ctrl_write(struct file *file,
  			 __func__, type, is_true);
  	}
  
@@ -22,7 +22,7 @@
  
 --- a/wdma.c
 +++ b/wdma.c
-@@ -62,6 +62,11 @@ dump_rx_ring_raw(struct wdma_entry *wdma
+@@ -50,6 +50,11 @@ dump_rx_ring_raw(struct wdma_entry *wdma
  	struct warp_ring *ring = &wdma->res_ctrl.rx_ctrl.rx_ring_ctrl.ring[ring_id];
  	u8 *addr;
  	u32 size;

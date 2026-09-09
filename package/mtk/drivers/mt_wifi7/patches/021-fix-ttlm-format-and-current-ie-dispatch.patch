@@ -1,0 +1,322 @@
+From: C2000MAX local driver maintenance
+Subject: [PATCH 021] Fix TTLM control format and current-element dispatch
+
+Accept the one-octet default control, bounded optional fields and presence
+bitmap payloads. Parse atomically, preserve the caller beacon timestamp,
+and mark emitted per-TID maps as explicit instead of default.
+
+Dispatch the current TTLM extension only, check the IE header before Len,
+and reject a supplied malformed STA cache before disconnecting. The fixed
+zero cache still means no supplied IE. No new mapping negotiation is added.
+The pointer parser API requires a complete bounded IE from its caller.
+
+diff --git a/mt_wifi/common/bss_mngr/bss_mngr_element.c b/mt_wifi/common/bss_mngr/bss_mngr_element.c
+index e611c69..f465c72 100644
+--- a/mt_wifi/common/bss_mngr/bss_mngr_element.c
++++ b/mt_wifi/common/bss_mngr/bss_mngr_element.c
+@@ -2458,6 +2458,9 @@ u8 *build_tid_to_link_map_ie(struct bmgr_entry *entry, u8 *f_buf)
+ 	u16 link_map;
+ 	u8 tid;
+ 
++	if (!entry || !f_buf)
++		return f_buf;
++
+ 	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_INFO,
+ 			 "%s: [%d]\n", __func__, entry->bss_idx);
+ 
+@@ -2466,9 +2469,9 @@ u8 *build_tid_to_link_map_ie(struct bmgr_entry *entry, u8 *f_buf)
+ 		eid->Octet[0] = EID_EXT_EHT_TID2LNK_MAP;
+ 		pos += sizeof(struct _EID_STRUCT);
+ 
+-		/* TID-To-Link Mapping Control */
++		/* Explicit mappings follow, so the Default Link Mapping bit must be zero. */
+ 		SET_DOT11BE_TID2LNK_MAP_CTRL_DIR(tid2lnk_ctrl, TID2LNK_MAP_CTRL_DIR_BI);
+-		SET_DOT11BE_TID2LNK_MAP_CTRL_DEFAULT_LNK_MAP(tid2lnk_ctrl, TRUE);
++		SET_DOT11BE_TID2LNK_MAP_CTRL_DEFAULT_LNK_MAP(tid2lnk_ctrl, FALSE);
+ 		SET_DOT11BE_TID2LNK_MAP_CTRL_LNK_MAP_PRES(tid2lnk_ctrl, link_map_present);
+ 		tid2lnk_ctrl = cpu_to_le16(tid2lnk_ctrl);
+ 		NdisMoveMemory((u8 *)pos, &tid2lnk_ctrl, sizeof(tid2lnk_ctrl));
+@@ -2517,138 +2520,99 @@ u8 *build_tid_to_link_map_ie(struct bmgr_entry *entry, u8 *f_buf)
+ int parse_tid_to_link_map_ie(u8 *t2l_ie, struct tid2lnk_ie_info *t2l_info)
+ {
+ 	struct _EID_STRUCT *eid = (struct _EID_STRUCT *)t2l_ie;
+-	u8 *pos = t2l_ie;
+-	u8 *end;
+-	int ret = 0;
+-	u8 t2l_ie_len = 0;
+-	u16 t2l_ctrl = 0;
+-	u16 link_map = 0;
++	struct tid2lnk_ie_info parsed = {0};
++	u8 *pos;
++	u8 remaining;
++	u8 t2l_ctrl;
++	u8 map_size;
++	u16 link_map;
+ 	u8 tid;
+ 	u8 link_id;
+-	u8 mld_link_max;
+-	u8 *tid_map;
+ 
+-	if (eid->Eid != IE_WLAN_EXTENSION) {
+-		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_INFO,
+-				 "%s: incorrect eid(%d)\n", __func__, eid->Eid);
+-		ret = -1;
+-		goto err;
+-	}
+-
+-	t2l_ie_len = eid->Len;
+-	if ((t2l_ie_len == 0) || (eid->Octet[0] != EID_EXT_EHT_TID2LNK_MAP)) {
+-		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-				 "%s: incorrect eid_ext(%d)\n", __func__, eid->Octet[0]);
+-		ret = -1;
++	/* This internal API receives a complete IE: the caller must first check
++	 * that the two-byte header and all eid->Len bytes fit its received buffer.
++	 * Validate each optional field against that declared length below.
++	 */
++	if (!t2l_ie || !t2l_info)
++		return -1;
++	if (eid->Eid != IE_WLAN_EXTENSION || eid->Len < 2 ||
++		eid->Octet[0] != EID_EXT_EHT_TID2LNK_MAP)
+ 		goto err;
+-	}
+-	end = pos + 2 + t2l_ie_len;
+ 
+-	if ((pos + sizeof(struct _EID_STRUCT) + sizeof(t2l_ctrl)) > end) {
+-		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-				 "incorrect length\n");
+-		ret = -1;
++	/* The control is one octet. Presence is a second octet only for an
++	 * explicit mapping; it precedes the optional switch time and duration.
++	 */
++	pos = eid->Octet + 1;
++	remaining = eid->Len - 1;
++	t2l_ctrl = *pos++;
++	remaining--;
++	parsed.ctrl_dir = GET_DOT11BE_TID2LNK_MAP_CTRL_DIR(t2l_ctrl);
++	parsed.ctrl_default = GET_DOT11BE_TID2LNK_MAP_CTRL_DEFAULT_LNK_MAP(t2l_ctrl);
++	parsed.ctrl_mst = GET_DOT11BE_TID2LNK_MAP_CTRL_MST(t2l_ctrl);
++	parsed.ctrl_ed = GET_DOT11BE_TID2LNK_MAP_CTRL_ED(t2l_ctrl);
++	parsed.ctrl_size = GET_DOT11BE_TID2LNK_MAP_CTRL_LINK_MAP_SIZE(t2l_ctrl);
++	if (parsed.ctrl_dir > TID2LNK_MAP_CTRL_DIR_BI)
+ 		goto err;
++	if (!parsed.ctrl_default) {
++		if (remaining < 1)
++			goto err;
++		parsed.ctrl_map_pres = *pos++;
++		remaining--;
+ 	}
+-	pos += sizeof(struct _EID_STRUCT);
+-
+-	/* TID-To-Link Control */
+-	NdisMoveMemory(&t2l_ctrl, (u8 *)pos, sizeof(t2l_ctrl));
+-	t2l_ctrl = cpu_to_le16(t2l_ctrl);
+-	pos += sizeof(t2l_ctrl);
+-
+-	t2l_info->ctrl_dir = GET_DOT11BE_TID2LNK_MAP_CTRL_DIR(t2l_ctrl);
+-	t2l_info->ctrl_default = GET_DOT11BE_TID2LNK_MAP_CTRL_DEFAULT_LNK_MAP(t2l_ctrl);
+-	t2l_info->ctrl_mst = GET_DOT11BE_TID2LNK_MAP_CTRL_MST(t2l_ctrl);
+-	t2l_info->ctrl_ed = GET_DOT11BE_TID2LNK_MAP_CTRL_ED(t2l_ctrl);
+-	t2l_info->ctrl_size = GET_DOT11BE_TID2LNK_MAP_CTRL_LINK_MAP_SIZE(t2l_ctrl);
+-	t2l_info->ctrl_map_pres = GET_DOT11BE_TID2LNK_MAP_CTRL_LNK_MAP_PRES(t2l_ctrl);
+-
+-	if (t2l_info->ctrl_mst) {
+-		if (pos + sizeof(t2l_info->mst_tsf) > end) {
+-			MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-			 "incorrect length\n");
+-			ret = -1;
++	if (parsed.ctrl_mst) {
++		if (remaining < 2)
+ 			goto err;
+-		}
+-		NdisMoveMemory(&t2l_info->mst_tsf, (u8 *)pos, sizeof(t2l_info->mst_tsf));
+-		t2l_info->mst_tsf = cpu_to_le16(t2l_info->mst_tsf);
+-		pos += sizeof(t2l_info->mst_tsf);
++		parsed.mst_tsf = (u16)pos[0] | ((u16)pos[1] << 8);
++		pos += 2;
++		remaining -= 2;
+ 	}
+-	if (t2l_info->ctrl_ed) {
+-		if (pos + 3 > end) {  /*expected duration is 3 octets defined by spec*/
+-			MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-			 "incorrect length\n");
+-			ret = -1;
++	if (parsed.ctrl_ed) {
++		if (remaining < 3)
+ 			goto err;
+-		}
+-		NdisMoveMemory(&t2l_info->ed_tsf, (u8 *)pos, 3);
+-		t2l_info->ed_tsf = cpu_to_le32(t2l_info->ed_tsf);
++		parsed.ed_tsf = (u32)pos[0] | ((u32)pos[1] << 8) |
++			((u32)pos[2] << 16);
+ 		pos += 3;
++		remaining -= 3;
+ 	}
+ 
+-	if (t2l_info->ctrl_map_pres != 0xff) { /*all of the tids need mapping to one link at least*/
+-		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-			 "incorrect mapping relationship\n");
+-		ret = -1;
+-		goto err;
+-	}
+-	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_INFO,
+-			"%s: dir(%d), default(%d), map_pres(0x%x)\n", __func__,
+-			t2l_info->ctrl_dir,
+-			t2l_info->ctrl_default,
+-			t2l_info->ctrl_map_pres);
+-
+-	if (t2l_info->ctrl_size == 0) { /*2 octets*/
+-		if ((pos + MAX_TID_MAPPING_NUM * 2) > end) {
+-			MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-			 "incorrect length\n");
+-			ret = -1;
+-			goto err;
+-		}
+-		mld_link_max = MLD_LINK_MAX;
+-	} else { /*1 octet*/
+-		if ((pos + MAX_TID_MAPPING_NUM) > end) {
+-			MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_ERROR,
+-			 "incorrect length\n");
+-			ret = -1;
+-			goto err;
++	/* Default and absent TIDs use every set-up link. Consumers index this
++	 * per-link map only for valid links; zero would mean a disabled link.
++	 * Reserved control bits/trailing fields are ignored for compatibility.
++	 */
++	map_size = parsed.ctrl_size ? 1 : 2;
++	for (tid = 0; tid < MAX_TID_MAPPING_NUM; tid++) {
++		link_map = 0xffff;
++		if (!parsed.ctrl_default && (parsed.ctrl_map_pres & BIT(tid))) {
++			if (remaining < map_size)
++				goto err;
++			link_map = pos[0];
++			if (map_size == 2)
++				link_map |= (u16)pos[1] << 8;
++			if (!link_map)
++				goto err;
++			pos += map_size;
++			remaining -= map_size;
+ 		}
+-		mld_link_max = MLD_LINK_MAX / 2;
+-	}
+-
+-	tid_map = &t2l_info->tid_map[0];
+-	for (tid = 0 ; tid < MAX_TID_MAPPING_NUM; tid++) {
+-		if (t2l_info->ctrl_size == 0) { /*2 octets*/
+-			NdisMoveMemory(&link_map, pos, 2);
+-			link_map = cpu_to_le16(link_map);
+-			pos += 2;
+-		} else { /*1 octet*/
+-			NdisMoveMemory(&link_map, pos, 1);
+-			pos += 1;
++		for (link_id = 0; link_id < MLD_LINK_MAX; link_id++) {
++			if (link_map & BIT(link_id))
++				parsed.tid_map[link_id] |= BIT(tid);
+ 		}
+-		for (link_id = 0; link_id < mld_link_max; link_id++)
+-			tid_map[link_id] |= ((link_map & (1 << link_id)) >> link_id) << tid;
+ 	}
+ 
+-	t2l_info->state = TRUE;
+-
+-	for (link_id = 0; link_id < BSS_MNGR_MAX_BAND_NUM; link_id++) {
+-		MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_INFO,
+-				 "\tlink(%d) tid_map(0x%02x)\n", link_id, t2l_info->tid_map[link_id]);
+-	}
++	/* Commit only after successful validation, replacing rather than ORing
++	 * a previous mapping. The beacon timestamp is supplied by the caller.
++	 */
++	parsed.bcn_tsf = t2l_info->bcn_tsf;
++	parsed.state = TRUE;
++	*t2l_info = parsed;
+ 	hex_dump_with_cat_and_lvl("T2L IE:", (u8 *)t2l_ie, (pos - t2l_ie),
+ 		DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_DEBUG);
+-	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_INFO,
+-		"\t mst=%d, ed=%d, mst_tsf=%d, ed_tsf=%d, bcn_tsf=%d\n", t2l_info->ctrl_mst, t2l_info->ctrl_ed,
+-		t2l_info->mst_tsf, t2l_info->ed_tsf, t2l_info->bcn_tsf);
+-
+-	return 0; //pos;
++	return 0;
+ 
+ err:
+ 	MTWF_DBG(NULL, DBG_CAT_MLO, CATMLO_BMGR, DBG_LVL_WARN,
+-			"error %d:\n", ret);
+-	return ret;
++		"invalid TID-to-link mapping IE\n");
++	return -1;
+ }
+ 
+ u8 *build_aid_bitmap_ie(struct mld_link_recomm *link_recomm, u8 *f_buf)
+diff --git a/mt_wifi/common/cmm_sanity.c b/mt_wifi/common/cmm_sanity.c
+index a8d04f2..b2b3ae8 100644
+--- a/mt_wifi/common/cmm_sanity.c
++++ b/mt_wifi/common/cmm_sanity.c
+@@ -841,7 +841,8 @@ BOOLEAN PeerBeaconAndProbeRspSanity(
+ #endif
+ 
+ 	/* get variable fields from payload and advance the pointer*/
+-	while ((Length + 2 + pEid->Len) <= MsgLen) {
++	while ((Length + 2 <= MsgLen) &&
++		((Length + 2 + pEid->Len) <= MsgLen)) {
+ 		/* Secure copy VIE to VarIE[MAX_VIE_LEN] didn't overflow.*/
+ 		if ((*LengthVIE + pEid->Len + 2) >= MAX_VIE_LEN) {
+ 			MTWF_DBG(NULL, DBG_CAT_TEST, CATTEST_SANITY, DBG_LVL_WARN,
+@@ -1522,8 +1523,10 @@ BOOLEAN PeerBeaconAndProbeRspSanity(
+ 				return FALSE;
+ 			}
+ 
+-			/*parse t2lm ie*/
+-			if (HAS_EHT_ML_T2LM_EXIST(ie_list->cmm_ies.ie_exists)) {
++			/* The existence bitmap accumulates across IEs. Dispatch only the
++			 * current TTLM element, not any extension following it.
++			 */
++			if (pEid->Len >= 1 && pEid->Octet[0] == EID_EXT_EHT_TID2LNK_MAP) {
+ 				if (parse_tid_to_link_map_ie((UINT8 *)pEid, &ie_list->t2lm_info) < 0) {
+ 					if (pPeerWscIe)
+ 						os_free_mem(pPeerWscIe);
+diff --git a/mt_wifi/common/mld_link_mgr.c b/mt_wifi/common/mld_link_mgr.c
+index 511d682..0f0dca1 100644
+--- a/mt_wifi/common/mld_link_mgr.c
++++ b/mt_wifi/common/mld_link_mgr.c
+@@ -1251,16 +1251,22 @@ int sta_mld_conn_req(struct wifi_dev *wdev, struct mld_conn_req *mld_conn)
+ 	if (!set_up_link)
+ 		return -1;
+ 
++	/* Validate a supplied TTLM before changing the current connection.
++	 * common_ies has a fixed, zero-initialized cache even when no TTLM was
++	 * supplied; that empty cache is not an invalid on-air element.
++	 * The parsed result is not used to program a new firmware mapping here.
++	 */
++	if (mld_conn->t2l_ie && (mld_conn->t2l_ie[0] || mld_conn->t2l_ie[1])) {
++		if (mld_conn->t2l_ie[1] + 2 > MAX_LEN_OF_T2LIE)
++			return -1;
++		if (parse_tid_to_link_map_ie(mld_conn->t2l_ie, &t2l_info) < 0)
++			return -1;
++	}
++
+ 	/* 1. disconnect current connection*/
+ 	if (mld->peer_mld.valid)
+ 		sta_mld_disconn_req(wdev);
+ 
+-	/* 2. parse t2l ie*/
+-	if (mld_conn->t2l_ie) {
+-		/*need to check return value later*/
+-		parse_tid_to_link_map_ie(mld_conn->t2l_ie, &t2l_info);
+-	}
+-
+ 	if (mld_conn->ml_ie) {
+ 		/* 3. parse mld ie*/
+ 		/*need to check return value later*/
+diff --git a/mt_wifi/protocol/be/mgmt_eht.c b/mt_wifi/protocol/be/mgmt_eht.c
+index 05ae7ae..ee2c5b2 100644
+--- a/mt_wifi/protocol/be/mgmt_eht.c
++++ b/mt_wifi/protocol/be/mgmt_eht.c
+@@ -2166,6 +2166,9 @@ int eht_get_ies(
+ 		}
+ 		break;
+ 	case EID_EXT_EHT_TID2LNK_MAP:
++		/* Even a default mapping contains one control octet. */
++		if (ie_len < 1)
++			return -1;
+ 		SET_EHT_ML_T2LM_EXIST(cmm_ies->ie_exists);
+ 		break;
+ 	case IE_EXTENSION_ID_NON_INHERITANCE:

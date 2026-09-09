@@ -47,7 +47,7 @@ grep -Fq 'begin_at_transaction "$at_port"' "$SIM" ||
 	fail 'SIM command sequence is not wrapped in one AT transaction'
 ! grep -Eq 'tom_modem[[:space:]]+-d' "$SIM" ||
 	fail 'SIM switching still opens the modem serial port directly'
-grep -q '^START=12$' "$SIM_INIT" ||
+grep -q '^START=09$' "$SIM_INIT" ||
 	fail 'saved SIM mux/power preparation does not run early in rc.d'
 grep -Fq 'boot-prepare' "$SIM_INIT" ||
 	fail 'early SIM startup does not separate GPIO preparation from AT verification'

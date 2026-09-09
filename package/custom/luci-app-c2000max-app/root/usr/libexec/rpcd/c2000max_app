@@ -14,10 +14,12 @@ local_sms_enable
 local_network_write_enable
 local_sim_switch_enable
 local_cellular_record_enable
+local_led_enable
 password_enable
 reboot_enable
 remote_web_enable
 device_report_enable
+remote_led_enable
 signal_report_enable
 traffic_report_enable
 terminal_tracking_enable
@@ -37,6 +39,9 @@ cache_active_window
 signal_normal_interval
 signal_test_interval
 signal_carrier_interval
+presence_interval
+status_interval
+report_interval
 "
 
 normalize_bool()
@@ -59,6 +64,24 @@ normalize_number()
 	printf '%s\n' "$value"
 }
 
+number_limits()
+{
+	case "$1" in
+		modem_cache_interval) minimum=1; maximum=60; fallback=10 ;;
+		selector_cache_interval) minimum=1; maximum=60; fallback=15 ;;
+		cache_warm_interval) minimum=1; maximum=60; fallback=2 ;;
+		cache_idle_interval) minimum=5; maximum=300; fallback=30 ;;
+		cache_active_window) minimum=30; maximum=900; fallback=180 ;;
+		signal_normal_interval) minimum=1; maximum=30; fallback=3 ;;
+		signal_test_interval) minimum=1; maximum=10; fallback=1 ;;
+		signal_carrier_interval) minimum=2; maximum=120; fallback=10 ;;
+		presence_interval) minimum=2; maximum=60; fallback=2 ;;
+		status_interval) minimum=10; maximum=300; fallback=30 ;;
+		report_interval) minimum=60; maximum=3600; fallback=300 ;;
+		*) return 1 ;;
+	esac
+}
+
 status()
 {
 	local option value identity device_id broker state state_message bridge_log
@@ -66,7 +89,9 @@ status()
 	local bridge_session_state bridge_session_message
 	local bridge_session_started bridge_session_age bridge_next_reconnect
 	local bridge_reconnect_count bridge_reconnect_interval
-	local cache_state cache_message cache_elapsed_ms
+	local cache_state cache_message cache_elapsed_ms cache_runtime
+	local cache_active cache_last_success cache_updated cache_last_error
+	local minimum maximum fallback
 	local wifi_apply_state wifi_apply_message
 	local remote_command_state remote_command_message
 	local remote_command_exit_code remote_command_ready remote_command_rweb
@@ -121,6 +146,23 @@ status()
 	case "$cache_elapsed_ms" in
 		''|*[!0-9]*) cache_elapsed_ms=0 ;;
 	esac
+	# This is already-produced runtime metadata, never a modem query. The
+	# successful sample timestamp remains unchanged during idle checks.
+	cache_runtime="$(cat /var/run/c2000max-app/cache.state 2>/dev/null)"
+	value="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.state')"
+	case "$value" in
+		ready|idle|error|stopped)
+			cache_state="$value"
+			cache_message="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.message')"
+			cache_elapsed_ms="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.elapsed_ms')"
+			case "$cache_elapsed_ms" in ''|*[!0-9]*) cache_elapsed_ms=0 ;; esac ;;
+	esac
+	cache_active="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.active')"
+	cache_last_success="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.last_success')"
+	cache_updated="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.updated')"
+	cache_last_error="$(printf '%s' "$cache_runtime" | jsonfilter -e '@.last_error')"
+	case "$cache_last_success" in ''|*[!0-9]*) cache_last_success=0 ;; esac
+	case "$cache_updated" in ''|*[!0-9]*) cache_updated=0 ;; esac
 	wifi_apply_state="$(printf '%s' "$identity" |
 		jsonfilter -e '@.wifi_apply_state')"
 	wifi_apply_message="$(printf '%s' "$identity" |
@@ -185,18 +227,16 @@ status()
 	json_init
 	for option in $OPTIONS; do
 		value="$(uci -q get "c2000max_app.main.$option")"
+		case "$option:$value" in
+			local_led_enable:) value="$(uci -q get c2000max_app.main.local_device_enable)" ;;
+			remote_led_enable:) value="$(uci -q get c2000max_app.main.device_report_enable)" ;;
+		esac
 		json_add_boolean "$option" "$([ "$value" = 1 ] && echo 1 || echo 0)"
 	done
 	for option in $NUMBER_OPTIONS; do
 		value="$(uci -q get "c2000max_app.main.$option")"
-		case "$option" in
-			modem_cache_interval) value="${value:-10}" ;;
-			selector_cache_interval) value="${value:-15}" ;;
-			cache_warm_interval) value="${value:-2}" ;;
-			cache_idle_interval) value="${value:-30}" ;;
-			cache_active_window) value="${value:-180}" ;;
-			*) value="${value:-1}" ;;
-		esac
+		number_limits "$option"
+		value="$(normalize_number "$value" "$minimum" "$maximum")" || value="$fallback"
 		json_add_int "$option" "$value"
 	done
 	value="$(uci -q get c2000max_app.main.local_protocol_mode)"
@@ -243,6 +283,11 @@ status()
 	json_add_string cache_state "$cache_state"
 	json_add_string cache_message "$cache_message"
 	json_add_int cache_elapsed_ms "${cache_elapsed_ms:-0}"
+	json_add_boolean cache_active "$([ "$cache_active" = true ] && echo 1 || echo 0)"
+	json_add_int cache_last_success "$cache_last_success"
+	json_add_int cache_updated "$cache_updated"
+	json_add_string cache_last_error "$cache_last_error"
+	json_add_int status_updated "$(date +%s)"
 	json_add_string wifi_apply_state "$wifi_apply_state"
 	json_add_string wifi_apply_message "$wifi_apply_message"
 	json_add_string remote_command_state "$remote_command_state"
@@ -269,6 +314,7 @@ status()
 	json_add_boolean remote_wget_ready \
 		"$([ "$remote_wget_ready" = true ] && echo 1 || echo 0)"
 	json_add_string app_build "V36.10"
+	json_add_string app_plugin_version "1.11.0"
 	json_add_string app_software_version "2.9.9.9"
 	root_password_configured=0
 	password_status="$(passwd -S root 2>/dev/null | awk '{ print $2; exit }')"
@@ -415,10 +461,12 @@ case "$1" in
 		"local_network_write_enable": "bool",
 		"local_sim_switch_enable": "bool",
 		"local_cellular_record_enable": "bool",
+		"local_led_enable": "bool",
 		"password_enable": "bool",
 		"reboot_enable": "bool",
 		"remote_web_enable": "bool",
 		"device_report_enable": "bool",
+		"remote_led_enable": "bool",
 		"signal_report_enable": "bool",
 		"traffic_report_enable": "bool",
 		"terminal_tracking_enable": "bool",
@@ -435,7 +483,10 @@ case "$1" in
 		"cache_active_window": "int",
 		"signal_normal_interval": "int",
 		"signal_test_interval": "int",
-		"signal_carrier_interval": "int"
+		"signal_carrier_interval": "int",
+		"presence_interval": "int",
+		"status_interval": "int",
+		"report_interval": "int"
 	}
 }
 EOF
@@ -463,6 +514,17 @@ EOF
 				remote_requested=0
 				for option in $OPTIONS; do
 					json_get_var raw "$option"
+					case "$option:$raw" in
+						local_led_enable:|remote_led_enable:)
+							raw="$(uci -q get "c2000max_app.main.$option")"
+							if [ -z "$raw" ]; then
+								case "$option" in
+									local_led_enable) raw="$(uci -q get c2000max_app.main.local_device_enable)" ;;
+									remote_led_enable) raw="$(uci -q get c2000max_app.main.device_report_enable)" ;;
+								esac
+							fi
+							raw="${raw:-0}" ;;
+					esac
 					value="$(normalize_bool "$raw")" || {
 						echo '{"success":false,"message":"APP 管理开关值无效"}'
 						exit 0
@@ -493,19 +555,15 @@ EOF
 				}
 				for option in $NUMBER_OPTIONS; do
 					json_get_var raw "$option"
+					number_limits "$option"
 					case "$option" in
-						modem_cache_interval|selector_cache_interval|cache_warm_interval)
-							minimum=1; maximum=60 ;;
-						cache_idle_interval)
-							minimum=5; maximum=300 ;;
-						cache_active_window)
-							minimum=30; maximum=900 ;;
-						signal_normal_interval)
-							minimum=1; maximum=30 ;;
-						signal_test_interval)
-							minimum=1; maximum=10 ;;
-						signal_carrier_interval)
-							minimum=2; maximum=120 ;;
+						presence_interval|status_interval|report_interval)
+							# A still-open older LuCI page does not send these.
+							# Preserve the user's existing cadence in that case.
+							if [ -z "$raw" ]; then
+								raw="$(uci -q get "c2000max_app.main.$option")"
+								raw="${raw:-$fallback}"
+							fi ;;
 					esac
 					value="$(normalize_number "$raw" "$minimum" "$maximum")" || {
 						uci -q revert c2000max_app

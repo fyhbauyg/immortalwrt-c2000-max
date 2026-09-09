@@ -500,6 +500,12 @@ local function battery_status()
 end
 
 local function runtime_status()
+	-- Share the APP-shaped local snapshot without calling /info and /status
+	-- repeatedly (or recursively entering the local status adapter).
+	if type(core.app_runtime_status) == "function" then
+		return { result = core.app_runtime_status() }
+	end
+	-- Compatibility for deployments loading an older core during an upgrade.
 	local info_result = core.handle("info", { type = "all" })
 	local status_result = core.handle("status", {})
 	local info = type(info_result.result) == "table" and
@@ -586,6 +592,22 @@ local function basic_result(event, payload)
 	local result
 	if event == "heartbeat" then
 		return { errcode = "0", code = "0" }, "heartbeat"
+	elseif event == "led" then
+		-- Observed from the 3.2 APP's remote light-control page. The cloud
+		-- API uses camelCase times; local /led uses snake_case. Both feed
+		-- the same strict board policy, with a separate remote permission.
+		if not core.feature_enabled("remote_led_enable") then
+			return disabled("remote indicator control"), "led"
+		end
+		local value = {}
+		for _, field in ipairs({ "led", "schedule", "trans_id" }) do
+			value[field] = payload[field]
+		end
+		value.start_time = payload.start_time or payload.startTime or payload.ledStartTime
+		value.end_time = payload.end_time or payload.endTime or payload.ledEndTime
+		result = core.handle("led", value, { source = "remote" })
+		result.errcode = code(result)
+		return result, "led"
 	elseif event == "time" then
 		return {
 			id = core.device_id() or "",

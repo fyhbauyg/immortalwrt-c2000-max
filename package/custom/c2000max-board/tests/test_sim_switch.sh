@@ -369,7 +369,7 @@ INIT="$ROOT/files/etc/init.d/c2000max-sim"
 if grep -Fq '/usr/sbin/c2000max-sim apply >"$state"' "$INIT"; then
 	fail_test "boot retry can still fall back to reset UCI slot"
 fi
-grep -q '^START=12$' "$INIT" ||
+grep -q '^START=09$' "$INIT" ||
 	fail_test "modem power-on still waits until late QModem startup"
 grep -Fq '/usr/sbin/c2000max-sim boot-prepare >"$state"' "$INIT" ||
 	fail_test "boot does not perform exactly one early power/mux preparation"

@@ -7,12 +7,13 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=warp
+PKG_RELEASE:=2
 P4REV:=
-PKG_SOURCE_DATE:=2025-06-13
-PKG_SOURCE_VERSION:=433271
-PKG_SOURCE:=warp_20250613-433271.tar.xz
-PKG_SOURCE_URL:=https://github.com/chasey-dev/objs/releases/download/v1
-PKG_HASH:=6537088695c124135b695bf4ce6d4f9febecd3fb41889c4419de77780dca6488
+PKG_SOURCE_DATE:=2025-09-19
+PKG_SOURCE_VERSION:=9c1cfa
+PKG_SOURCE:=warp_20250919-9c1cfa.tar.xz
+PKG_SOURCE_URL:=file://$(TOPDIR)/local-sources
+PKG_HASH:=f644bb165b0c1d05167d09dea91a678b7304238dae82dfe541bfd3e2920be28a
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)
 
 PKG_BUILD_PARALLEL:=1
@@ -81,5 +82,3 @@ endef
 endif
 
 $(eval $(call KernelPackage,warp))
-
-

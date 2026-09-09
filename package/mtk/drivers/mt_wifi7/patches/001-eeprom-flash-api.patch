@@ -83,9 +83,10 @@
 -#endif /*CONFIG_WIFI_MTD*/
 -#endif /*RA_MTD_RW_BY_NUM*/
 -#endif /*CONFIG_PROPRIETERY_DRIVER*/
+-
 +int mt_eeprom_read_wifi(loff_t from, size_t len, u_char *buf);
 +int mt_eeprom_write_wifi(loff_t to, size_t len, const u_char *buf);
- 
++
 +#define flash_read(_ctrl, _ptr, _offset, _len) mt_eeprom_read_wifi(_offset, (size_t)_len, _ptr)
 +#define flash_write(_ctrl, _ptr, _offset, _len) mt_eeprom_write_wifi(_offset, (size_t)_len, _ptr)
  

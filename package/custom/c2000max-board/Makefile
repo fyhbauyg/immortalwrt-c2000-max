@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
 PKG_VERSION:=2.37.1
-PKG_RELEASE:=1
+PKG_RELEASE:=7
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -62,6 +62,7 @@ define Package/c2000max-board/install
 	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/98-c2000max-uplink $(1)/etc/hotplug.d/iface/98-c2000max-uplink
 	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/99-c2000max-nrqos $(1)/etc/hotplug.d/iface/99-c2000max-nrqos
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-c2000max-defaults $(1)/etc/uci-defaults/99-c2000max-defaults
+	$(INSTALL_BIN) ./files/etc/uci-defaults/99-c2000max-sim-early-boot $(1)/etc/uci-defaults/99-c2000max-sim-early-boot
 	$(INSTALL_BIN) ./files/etc/uci-defaults/98-c2000max-passwordless $(1)/etc/uci-defaults/98-c2000max-passwordless
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-y-c2000max-v3601-services $(1)/etc/uci-defaults/99-y-c2000max-v3601-services
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-z-c2000max-feed-fix $(1)/etc/uci-defaults/99-z-c2000max-feed-fix

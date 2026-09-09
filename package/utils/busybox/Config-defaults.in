@@ -870,6 +870,7 @@ config BUSYBOX_DEFAULT_TR
 	default y
 config BUSYBOX_DEFAULT_FEATURE_TR_CLASSES
 	bool
+	default y if TARGET_mediatek_filogic_DEVICE_nradio_c2000-max
 	default n
 config BUSYBOX_DEFAULT_FEATURE_TR_EQUIV
 	bool

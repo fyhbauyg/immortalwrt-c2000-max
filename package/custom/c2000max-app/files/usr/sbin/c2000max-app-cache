@@ -7,6 +7,9 @@ local core = require "c2000max_app.core"
 
 local STATE_DIR = "/var/run/c2000max-app"
 local STATE_FILE = STATE_DIR .. "/cache.state"
+local last_success = 0
+local last_elapsed = 0
+local last_error = ""
 
 local function clock()
 	if type(nixio.gettimeofday) == "function" then
@@ -18,17 +21,28 @@ local function clock()
 	return os.time()
 end
 
-local function write_state(state, message, result, elapsed)
+local function write_state(state, message, result, elapsed, active)
 	fs.mkdirr(STATE_DIR)
 	fs.chmod(STATE_DIR, "0755")
-	fs.writefile(STATE_FILE, json.stringify({
+	local temporary = STATE_FILE .. ".tmp." .. tostring(nixio.getpid())
+	local encoded = json.stringify({
 		state = state,
 		message = message or "",
 		modems = type(result) == "table" and result.modems or 0,
-		elapsed_ms = math.floor((tonumber(elapsed) or 0) * 1000 + 0.5),
+		elapsed_ms = math.floor(math.max(0, tonumber(elapsed) or 0) * 1000 + 0.5),
+		active = active == true,
+		last_success = last_success,
+		last_error = last_error,
 		updated = os.time()
-	}))
-	fs.chmod(STATE_FILE, "0600")
+	})
+	-- Readers must never observe a half-written JSON document. Keep private
+	-- diagnostic details private even before the atomic rename.
+	if fs.writefile(temporary, encoded) then
+		fs.chmod(temporary, "0600")
+		if not os.rename(temporary, STATE_FILE) then
+			fs.unlink(temporary)
+		end
+	end
 end
 
 local first = true
@@ -40,17 +54,23 @@ while core.local_enabled() or core.remote_enabled() do
 		local started = clock()
 		local ok, result = pcall(core.prewarm)
 		local elapsed = clock() - started
+		last_elapsed = elapsed
 		if ok then
 			last_result = result
+			last_success = os.time()
+			last_error = ""
 			write_state("ready", active and
 				"APP snapshot cache is active" or
-				"APP snapshot cache initialized", result, elapsed)
+				"APP snapshot cache initialized", result, elapsed, active)
 		else
-			write_state("error", tostring(result), nil, elapsed)
+			last_error = tostring(result)
+			write_state("error", last_error, last_result, elapsed, active)
 		end
 	else
-		write_state("ready", "APP snapshot cache is idle",
-			last_result, 0)
+		-- An idle check is not a fresh modem sample and must not clear the last
+		-- error or make an old snapshot look newly updated.
+		write_state(last_error ~= "" and "error" or "idle",
+			"APP snapshot cache is idle", last_result, last_elapsed, false)
 	end
 	first = false
 	nixio.nanosleep(active and policy.warm or policy.idle)

@@ -3,7 +3,7 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt798x-2p5g-phy-firmware-internal
 PKG_VERSION:=1
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=MediaTek-Firmware
 PKG_LICENSE_FILES:=files/LICENCE.mediatek
 
@@ -16,7 +16,10 @@ define KernelPackage/mt798x-2p5g-phy
   DEPENDS:=@TARGET_mediatek +mt798x-2p5g-phy-firmware-internal
   KCONFIG:=CONFIG_MEDIATEK_2P5GE_PHY=m
   FILES:=$(LINUX_DIR)/drivers/net/phy/mediatek/mtk-2p5ge.ko
-  AUTOLOAD:=$(call AutoLoad,73,mtk-2p5ge)
+  # Bind the internal PHY before preinit opens eth1. Generic C45 discovery
+  # sees only its PMA MMD and can leave autoneg disabled before this driver
+  # supplies the missing AN/PCS capabilities. Firmware is in the rootfs.
+  AUTOLOAD:=$(call AutoLoad,18,mtk-2p5ge,1)
 endef
 
 define KernelPackage/mt798x-2p5g-phy/description

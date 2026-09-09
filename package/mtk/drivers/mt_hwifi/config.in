@@ -1,5 +1,17 @@
 if PACKAGE_kmod-mt_hwifi
 
+config C2000MAX_DECO_MT76_FW_EXPERIMENTAL
+	bool "EXPERIMENTAL: Deco driver with MT7993 mt76 WM/ROM 20260310"
+	depends on MTK_HWIFI_MT7993 && TARGET_mediatek_filogic_DEVICE_nradio_c2000-max
+	depends on !MTK_WIFI7_FW_CASAN_SUPPORT
+	default n
+	help
+	  Laboratory-only unverified firmware pairing. This is NOT the missing
+	  vendor 20250919 SDK. Ordinary Wi-Fi, MLO and WED/HNAT need device testing.
+	  Installs unmodified, hash-pinned WM/ROM from one mt76 commit and its
+	  license. No TESTMODE image is supplied. Do not use for RF certification.
+	  Use a separate TF card and wired console; never write official SPI.
+
 config MTK_HWIFI_PCI_SUPPORT
 	bool "HWIFI PCIE/AXI Support"
 	default y

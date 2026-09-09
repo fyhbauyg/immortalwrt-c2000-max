@@ -1,0 +1,28 @@
+--- a/mt_osal_cfg80211.c
++++ b/mt_osal_cfg80211.c
+@@ -2591,12 +2591,11 @@
+ 
+ 
+ 	if (pNdev->ieee80211_ptr->iftype == NL80211_IFTYPE_AP_VLAN)
+-		mt_cfg80211_ops_ctrl(pWiphy, NULL, mtk_ops_add_key,
++		return mt_cfg80211_ops_ctrl(pWiphy, NULL, mtk_ops_add_key,
+ 			ctrl_data_ptr, sizeof(struct mt_cfg80211_vndr_ctrl));
+ 	else
+-		mt_cfg80211_ops_ctrl(pWiphy, pNdev, mtk_ops_add_key,
++		return mt_cfg80211_ops_ctrl(pWiphy, pNdev, mtk_ops_add_key,
+ 			ctrl_data_ptr, sizeof(struct mt_cfg80211_vndr_ctrl));
+-	return 0;
+ }
+ 
+ static int mt_cfg80211_ops_get_key(
+@@ -2634,7 +2633,9 @@
+ 	}
+ 	ret = mt_cfg80211_ops_ctrl(pWiphy, pNdev, mtk_ops_get_key,
+ 			ctrl_data_ptr, sizeof(struct mt_cfg80211_vndr_ctrl));
+-	if (b_get_tsc && !ret){
++	if (ret)
++		return ret;
++	if (b_get_tsc) {
+ 		pCallback(pCookie, &key_params);
+ 		return 0;
+ 	}

@@ -1,6 +1,6 @@
 --- a/mt_wifi/common/cmm_rdm_mt.c
 +++ b/mt_wifi/common/cmm_rdm_mt.c
-@@ -7337,7 +7337,6 @@ VOID WrapDfsRddReportHandle(/* handle th
+@@ -7301,7 +7301,6 @@
  
  #ifdef CONFIG_MAP_SUPPORT
  #ifdef MAP_R2
@@ -8,7 +8,7 @@
  		UCHAR first_wdev = TRUE;
  		UCHAR Channel_for_radar = 0;
  		UCHAR bw_for_radar = 0;
-@@ -7529,7 +7528,6 @@ VOID WrapDfsRddReportHandle(/* handle th
+@@ -7493,7 +7492,6 @@
  #if defined(OFFCHANNEL_SCAN_FEATURE) && defined(MAP_R2)
  	if (IS_MAP_ENABLE(pAd)) {
  		Rsp.Action = DFS_RADAR_HIT;
@@ -18,7 +18,7 @@
  		Rsp.data.operating_ch_info.cfg_vht_bw = wlan_config_get_vht_bw(&pAd->ApCfg.MBSSID[MAIN_MBSSID].wdev);
 --- a/mt_wifi/os/linux/cfg80211/cfg80211_rx.c
 +++ b/mt_wifi/os/linux/cfg80211/cfg80211_rx.c
-@@ -1199,7 +1199,6 @@ BOOLEAN CFG80211_HandleMgmtFrame(RTMP_AD
+@@ -1178,7 +1178,6 @@
  
  	if (pWdev) {
  		pNetDev = pWdev->if_dev;

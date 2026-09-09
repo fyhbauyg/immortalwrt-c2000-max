@@ -1,0 +1,31 @@
+C2000MAX V37.01 DECO / MT76 FIRMWARE LABORATORY BUILD
+Not a stable release. Not the missing MediaTek 20250919 / 39602c SDK.
+
+Driver source: TP-Link Deco public logan source, input SHA256
+765c6bef02348e1613130ba151518a15965ba6a77eccad5cdbe8329e0e578dfc.
+WM / ROM: unmodified OpenWrt mt76 commit
+be5ce7910521492d4a2e4ce7ee3843680a46c047, internal build 2026-03-10.
+https://github.com/openwrt/mt76/tree/be5ce7910521492d4a2e4ce7ee3843680a46c047/firmware
+In this upstream naming convention MT7990_DEVICE_ID is PCI 0x7993.
+
+WM SHA256 b35b8c0737b55bd176a7e0142ec902c6edcfee1731b9ae6b2b7ecb557c2637c3
+ROM SHA256 e3ca02567e703a224719dd80c8f1d0c47642d4bede0c4501249ccf7b7602d973
+See the accompanying LICENSE for the original binary distribution terms.
+The binaries are only installed under names requested by the vendor loader;
+their contents are unchanged. No older TESTMODE, CASAN or idxlog firmware is mixed in.
+
+Chip ID, executable download container and entry match the expected loader.
+Runtime MCU commands, ordinary EHT, MLO, WED/RRO and HNAT are NOT verified.
+Even a single-link EHT AP uses some MLD paths: MLO disabled is not an ABI guard.
+Compilation and image verification do NOT prove working Wi-Fi or safe RF behavior.
+Test only with a separate TF card and wired management; retain a known-good card.
+Do not write bootloader, firmware, environment or factory partitions in official SPI.
+The existing C2000MAX SPI read-only and factory-calibration fail-closed guards remain.
+
+MLO is configured but defaults off. This build does not silently remove MLO support.
+TESTMODE executable is unavailable; RF test/calibration mode is unsupported.
+The existing test-mode startup helper can select TESTMODE if the factory test
+flag is set (factory offset 0x1af bit 0) or a user enables TestModeEn. In that
+case firmware loading may fail. This build does not clear factory flags or
+silently substitute a different executable. Restore a known-good TF card.
+Inherited DFS debugging settings are test-only. Do not use as a production AP.

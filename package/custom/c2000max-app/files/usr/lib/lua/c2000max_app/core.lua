@@ -1465,17 +1465,7 @@ local function valid_ipv4(ip)
 end
 
 local function interface_stats(name)
-	if type(name) ~= "string" or not name:match("^[A-Za-z0-9_.:%-]+$") then
-		return {}
-	end
-	local base = "/sys/class/net/" .. name .. "/statistics/"
-	return {
-		name = name,
-		rx_bytes = tonumber(read_trim(base .. "rx_bytes") or "0") or 0,
-		tx_bytes = tonumber(read_trim(base .. "tx_bytes") or "0") or 0,
-		rx_packets = tonumber(read_trim(base .. "rx_packets") or "0") or 0,
-		tx_packets = tonumber(read_trim(base .. "tx_packets") or "0") or 0
-	}
+	return require("c2000max_app.netstats").read(name)
 end
 
 local function sim_status(force)
@@ -3052,6 +3042,11 @@ local function basic_status()
 	}
 end
 
+function M.app_runtime_status(status, include_cellular)
+	return require("c2000max_app.runtime").read(status or basic_status(),
+		include_cellular == false and {} or list_modems())
+end
+
 function M.prewarm()
 	local modems = list_modems()
 	local refresh = M.signal_refresh_policy()
@@ -3072,6 +3067,19 @@ function M.handle(action, data, context)
 	local rv = response(data)
 
 	if action == "heartbeat" then
+		return rv
+	elseif action == "led" then
+		-- Both local transports and the cloud adapter use the same board LED
+		-- policy. Keep it separate from modem caches and network controls.
+		local result = require("c2000max_app.led").handle(data)
+		if type(result) ~= "table" then
+			rv.code = "2"
+			rv.message = "indicator control unavailable"
+			return rv
+		end
+		for key, value in pairs(result) do
+			if key ~= "trans_id" then rv[key] = value end
+		end
 		return rv
 	elseif action == "signal" then
 		local focused = tonumber(data.at_signal or 0) == 1
@@ -3275,9 +3283,19 @@ function M.handle(action, data, context)
 		return rv
 	elseif action == "status" then
 		rv.result = basic_status()
+		local runtime = M.app_runtime_status(rv.result,
+			context.source ~= "local" or bool_option("local_signal_enable"))
+		for key, value in pairs(runtime) do rv.result[key] = value end
 		return rv
 	elseif action == "speed" then
-		rv.result = interface_stats(tostring(data.name or "br-lan"))
+		-- APP 3.1/3.2 requests one /status CPE/WAN name and consumes
+		-- result.list[].upload/download as real cumulative byte counters.
+		-- Keep the legacy rx_bytes/tx_bytes fields without rate compensation.
+		rv.result = interface_stats(data.name == nil and "br-lan" or data.name)
+		if not rv.result.available then
+			rv.code = "2"
+			rv.message = rv.result.reason or "interface counters unavailable"
+		end
 		return rv
 	elseif action == "password" then
 		if not bool_option("password_enable") then
@@ -3412,6 +3430,9 @@ function M.local_action_allowed(action, data)
 
 	if action == "heartbeat" then
 		return true
+	elseif action == "led" then
+		if M.feature_enabled("local_led_enable") then return true end
+		return local_denied()
 	elseif action == "info" or action == "status" or
 	       action == "combo" or action == "sync" then
 		return local_permission("local_device_enable")
@@ -3486,6 +3507,15 @@ function M.feature_enabled(name)
 	end
 	if name == "upgrade_enable" then
 		return false
+	end
+	-- Existing opt-in installations have no new LED permission yet. Inherit
+	-- their device-management permission, but respect an explicit LED denial.
+	if name == "local_led_enable" or name == "remote_led_enable" then
+		local value = uci:get("c2000max_app", "main", name)
+		if value == nil then
+			return bool_option(name == "local_led_enable" and
+				"local_device_enable" or "device_report_enable")
+		end
 	end
 	return bool_option(name)
 end

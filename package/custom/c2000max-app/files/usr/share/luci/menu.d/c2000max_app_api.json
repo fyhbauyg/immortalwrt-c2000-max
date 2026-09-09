@@ -65,6 +65,15 @@
 		},
 		"auth": {}
 	},
+	"nradio/app/led": {
+		"action": {
+			"type": "call",
+			"module": "c2000max_app.http",
+			"function": "action_dispatch",
+			"parameters": [ "led" ]
+		},
+		"auth": {}
+	},
 	"nradio/app/wifi": {
 		"action": {
 			"type": "call",

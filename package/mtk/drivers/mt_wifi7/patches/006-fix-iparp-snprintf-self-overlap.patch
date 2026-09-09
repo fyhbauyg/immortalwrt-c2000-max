@@ -1,6 +1,6 @@
 --- a/mt_wifi/common/cmm_mat_iparp.c
 +++ b/mt_wifi/common/cmm_mat_iparp.c
-@@ -676,28 +676,10 @@ static NDIS_STATUS MATProto_IP_Init(
+@@ -676,28 +676,10 @@
  
  static inline void IPintToIPstr(int ipint, char Ipstr[20], ULONG BufLen)
  {

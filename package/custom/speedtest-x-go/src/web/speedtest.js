@@ -49,7 +49,7 @@ function Speedtest() {
   this._settings = {}; //settings for the speedtest worker
   this._state = 0; //0=adding settings, 1=adding servers, 2=server selection done, 3=test running, 4=done
   console.log(
-    "LibreSpeed by Federico Dossena v5.2.2 - https://github.com/librespeed/speedtest"
+    "C2000-MAX LAN engine 1.2.0; server-window upload - https://github.com/librespeed/speedtest"
   );
   console.log(
       "speedtest-x - https://github.com/BadApple9/speedtest-x"
@@ -322,19 +322,30 @@ Speedtest.prototype = {
    */
   start: function() {
     if (this._state == 3) throw "Test already running";
-    this.worker = new Worker("speedtest_worker.js?r=" + Math.random());
-    this.worker.onmessage = function(e) {
-      if (e.data === this._prevData) return;
-      else this._prevData = e.data;
-      var data = JSON.parse(e.data);
+    if (this._state == 1)
+      throw "When using multiple points of test, you must call selectServer before starting the test";
+    if (this.worker) this.worker.terminate();
+    clearInterval(this.updater);
+    this._prevData = null;
+    var worker = this.worker = new Worker("speedtest_worker.js?v=1.2.0&r=" + Math.random());
+    var completed = false;
+    var cancelTimer;
+    var deliver = function(data) {
+      if (completed || this.worker !== worker) return;
+      if (data.testState >= 4) {
+        completed = true;
+        clearTimeout(cancelTimer);
+        clearInterval(this.updater);
+        worker.terminate();
+        this.worker = null;
+        this._state = 4;
+      }
       try {
         if (this.onupdate) this.onupdate(data);
       } catch (e) {
         console.error("Speedtest onupdate event threw exception: " + e);
       }
       if (data.testState >= 4) {
-	  clearInterval(this.updater);
-        this._state = 4;
         try {
           if (this.onend) this.onend(data.testState == 5);
         } catch (e) {
@@ -342,14 +353,41 @@ Speedtest.prototype = {
         }
       }
     }.bind(this);
+    worker.onmessage = function(e) {
+      if (completed || e.data === this._prevData) return;
+      this._prevData = e.data;
+      var data;
+      try {
+        data = JSON.parse(e.data);
+        if (!data || typeof data !== 'object' || !Number.isInteger(data.testState) || data.testState < -1 || data.testState > 5)
+          throw new Error('Invalid status');
+      }
+      catch (error) {
+        deliver({ testState: 5, phase: 'error', error: '测速引擎返回了无效数据，请刷新页面。' });
+        return;
+      }
+      deliver(data);
+    }.bind(this);
+    worker.onerror = function(event) {
+      if (event.preventDefault) event.preventDefault();
+      deliver({ testState: 5, phase: 'error', error: '测速引擎无法运行，请刷新页面或更新浏览器。' });
+    };
+    this._cancel = function() {
+      if (cancelTimer || completed) return;
+      clearInterval(this.updater);
+      worker.postMessage('abort');
+      // Release the server session before termination; a broken worker still
+      // cannot keep the page busy indefinitely.
+      cancelTimer = setTimeout(function() {
+        deliver({ testState: 5, phase: 'cancelled', error: '' });
+      }, 1500);
+    };
     this.updater = setInterval(
       function() {
-        this.worker.postMessage("status");
+        if (!completed) worker.postMessage("status");
       }.bind(this),
       200
     );
-    if (this._state == 1)
-        throw "When using multiple points of test, you must call selectServer before starting the test";
     if (this._state == 2) {
       this._settings.url_dl =
         this._selectedServer.server + this._selectedServer.dlURL;
@@ -377,7 +415,6 @@ Speedtest.prototype = {
    */
   abort: function() {
     if (this._state < 3) throw "You cannot abort a test that's not started yet";
-    if (this._state < 4) this.worker.postMessage("abort");
+    if (this._state < 4 && this._cancel) this._cancel();
   }
 };
-

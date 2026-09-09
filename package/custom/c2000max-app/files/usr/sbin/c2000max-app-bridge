@@ -132,12 +132,54 @@ if id mosquitto >/dev/null 2>&1; then
 	chown mosquitto:mosquitto "$CONF" "$LOG"
 fi
 
+# BEGIN BRIDGE SUPERVISION
+# procd supervises this shell, not its grandchildren.  Wait on an asynchronous
+# timeout so ash can run the stop trap immediately; a foreground command would
+# defer the trap and leave the listener orphaned when procd kills this shell.
+bridge_child_pid=
+
+stop_bridge_child()
+{
+	[ -n "$bridge_child_pid" ] || return 0
+	# A completed wait may already have reaped the PID.  Never signal a recycled
+	# PID: only our still-owned, direct timeout child may receive this TERM.
+	if read -r child_stat < "/proc/$bridge_child_pid/stat" 2>/dev/null; then
+		child_stat="${child_stat##*) }"
+		set -- $child_stat
+		if [ "$2" = "$$" ]; then
+			kill -TERM "$bridge_child_pid" 2>/dev/null || :
+		fi
+	fi
+	# GNU timeout forwards TERM to its own broker process group.  Its -k 15
+	# remains active while we reap it, including when a broker ignores TERM.
+	wait "$bridge_child_pid" 2>/dev/null || :
+	bridge_child_pid=
+}
+
+stop_bridge()
+{
+	trap '' TERM INT HUP
+	# Cover TERM arriving between the asynchronous launch and the $! assignment.
+	# This is the script's only background job; ownership is checked above.
+	bridge_child_pid="${bridge_child_pid:-$!}"
+	stop_bridge_child
+	bridge_state stopped "official MQTT bridge stopped"
+	bridge_session_state stopped "official MQTT bridge stopped" 0
+	exit 0
+}
+
+trap stop_bridge_child EXIT
+trap stop_bridge TERM INT HUP
+
 bridge_state starting "local broker and official bridge starting"
 bridge_session_state starting "new official MQTT session starting" 0
 
 /usr/bin/timeout -s TERM -k 15 "$SESSION_RESTART_INTERVAL" \
-	/usr/sbin/mosquitto -c "$CONF"
+	/usr/sbin/mosquitto -c "$CONF" &
+bridge_child_pid=$!
+wait "$bridge_child_pid"
 result=$?
+bridge_child_pid=
 
 if [ "$result" -eq 124 ]; then
 	bridge_state reconnecting "scheduled official MQTT session refresh"
@@ -150,3 +192,4 @@ fi
 
 bridge_session_state stopped "official MQTT bridge exited" 0
 exit "$result"
+# END BRIDGE SUPERVISION

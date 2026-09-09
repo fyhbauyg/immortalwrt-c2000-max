@@ -1,6 +1,6 @@
 --- a/mt_wifi/ap/ap_data.c
 +++ b/mt_wifi/ap/ap_data.c
-@@ -1137,7 +1137,8 @@ static inline VOID ap_build_cache_802_11_header(
+@@ -1144,7 +1144,8 @@
  		   ) {
  			/* The addr3 of WDS packet is Destination Mac address and Addr4 is the Source Mac address. */
  			COPY_MAC_ADDR(pHeader80211->Addr3, pTxBlk->pSrcBufHeader);
@@ -10,7 +10,7 @@
  			pTxBlk->MpduHeaderLen += MAC_ADDR_LEN;
  			pTxBlk->wifi_hdr_len += MAC_ADDR_LEN;
  		} else
-@@ -1158,7 +1159,8 @@ static inline VOID ap_build_cache_802_11_header(
+@@ -1165,7 +1166,8 @@
  				COPY_MAC_ADDR(pHeader80211->Addr2, pAd->CurrentAddress); /* from AP1 */
  			}
  			COPY_MAC_ADDR(pHeader80211->Addr3, pTxBlk->pSrcBufHeader);	/* DA */
@@ -22,7 +22,7 @@
  		} else
 --- a/mt_wifi/common/qos.c
 +++ b/mt_wifi/common/qos.c
-@@ -612,14 +612,16 @@ INT receive_qos_action_frame(RTMP_ADAPTER *pAd, struct wifi_dev *wdev,
+@@ -612,14 +612,16 @@
  	NdisZeroMemory(&event, sizeof(event));
  	event.ifindex = RtmpOsGetNetIfIndex(wdev->if_dev);
  	event.event_id = WAPP_QOS_ACTION_FRAME_EVENT;

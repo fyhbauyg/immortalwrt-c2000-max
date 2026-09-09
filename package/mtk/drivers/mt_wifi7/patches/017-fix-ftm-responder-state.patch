@@ -1,0 +1,25 @@
+--- a/mt_wifi/common/action.c
++++ b/mt_wifi/common/action.c
+@@ -1361,7 +1361,8 @@
+ #ifdef FTM_SUPPORT
+ 	case ACTION_FTM_REQUEST:
+ 	{
+-		if (Elem->wdev->FtmCtrl.FtmEnable & ENABLE_MC_RSTA)
++		/* cfg80211_vndr_ftm.c stores enable bit 0 in FTMResp. */
++		if (Elem->wdev && Elem->wdev->FtmCtrl.FTMResp)
+ 			ReceiveFTMReq(pAd, Elem);
+ 		else
+ 			MTWF_DBG(pAd, DBG_CAT_PROTO, CATPROTO_FTM, DBG_LVL_ERROR,
+--- a/mt_wifi/feature/ftm/ftm.c
++++ b/mt_wifi/feature/ftm/ftm.c
+@@ -1296,7 +1296,9 @@
+ 		wdev = pAd->wdev_list[i];
+ 		if (wdev != NULL) {
+ 			pFtm = &wdev->FtmCtrl;
+-			pFtm->FtmEnable = 0;
++			/* Both roles remain disabled until explicitly enabled. */
++			pFtm->FTMResp = 0;
++			pFtm->FTMInit = 0;
+ 			pFtm->FTMRole = FTM_DEFAULT_ROLE;
+ 			pFtm->LastAssignedRSTA = 0;
+ 			pFtm->LastAssignedISTA = 0;
