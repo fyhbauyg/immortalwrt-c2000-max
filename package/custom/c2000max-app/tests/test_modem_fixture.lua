@@ -1044,4 +1044,23 @@ equal(cloud_signal.band_count, 2, "cloud preserves current CA topology")
 equal(cloud_signal.simtype, "4", "internal SIM type for remote APP")
 equal(cloud_signal.simno, "1", "internal SIM index for remote APP")
 
-print("PASS: MT5700 refresh throttles and dynamic CA topology map correctly")
+-- Keep the real core.handle() response envelope in this regression. Calling
+-- only runtime.read() (or the APP parser) misses its strict code === 0 gate.
+local saved_runtime = core.app_runtime_status
+core.app_runtime_status = function()
+	return { global = { cpu_percent = 14.6, mem_percent = 66.9 },
+		cpe = { { name = "fixture-cpe", rsrp = -78 } }, wans = {}, link = {} }
+end
+for _, source in ipairs({ "local", "remote" }) do
+	local dashboard = core.handle("status", { trans_id = 320 }, { source = source })
+	equal(type(dashboard.code), "number", "dashboard success code JSON type")
+	equal(dashboard.code, 0, "dashboard numeric success code")
+	equal(dashboard.trans_id, "320", "legacy transaction identity retained")
+	equal(dashboard.result.global.cpu_percent, 14.6, "dashboard CPU passthrough")
+	equal(dashboard.result.global.mem_percent, 66.9, "dashboard memory passthrough")
+	equal(dashboard.result.cpe[1].rsrp, -78, "dashboard signal passthrough")
+end
+equal(core.handle("heartbeat", {}).code, "0", "unrelated legacy code type unchanged")
+core.app_runtime_status = saved_runtime
+
+print("PASS: MT5700 refresh, CA topology and dashboard success-code contract")

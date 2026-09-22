@@ -234,6 +234,9 @@ function M.request()
 	context = context or { encrypted = false }
 	context.authorization = http.getenv("HTTP_AUTHORIZATION") or ""
 	context.cookie = http.getenv("HTTP_COOKIE") or ""
+	context.remote_addr = http.getenv("REMOTE_ADDR") or ""
+	context.server_addr = http.getenv("SERVER_ADDR") or ""
+	context.origin = http.getenv("HTTP_ORIGIN") or ""
 	return data, context, message
 end
 
@@ -355,13 +358,19 @@ local function request_token(data, context)
 	context = type(context) == "table" and context or {}
 	if not token then
 		local authorization = context.authorization or
-			http.getenv("HTTP_AUTHORIZATION") or ""
+			(not context.native_http and http.getenv("HTTP_AUTHORIZATION")) or ""
 		token = authorization:match("^[Bb]earer%s+([0-9A-Fa-f]+)$")
 	end
 	if not token then
-		local cookie = context.cookie or http.getenv("HTTP_COOKIE") or ""
-		token = cookie:match("sysauth=([0-9A-Fa-f]+)") or
-			http.getcookie("sysauth") or http.formvalue("token")
+		local cookie = context.cookie or
+			(not context.native_http and http.getenv("HTTP_COOKIE")) or ""
+		token = cookie:match("sysauth=([0-9A-Fa-f]+)")
+		-- An anonymous port-82 probe must return "no session", not throw
+		-- from luci.http.getcookie() when no LuCI request exists. Preserve
+		-- the LuCI form/query-token fallback only for the CGI transport.
+		if not token and not context.native_http then
+			token = http.getcookie("sysauth") or http.formvalue("token")
+		end
 	end
 	if type(token) ~= "string" or
 	   not token:match("^[0-9A-Fa-f]+$") or #token ~= 32 then

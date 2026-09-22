@@ -6,6 +6,9 @@ config app 'main'
 	option local_device_enable '1'
 	option local_led_enable '1'
 	option local_signal_enable '1'
+	# Optional LAN-only plaintext APP 3.2 signal/SIM reads, including SIM IDs.
+	# Never inherit this privacy-sensitive opt-in from permission defaults.
+	option local_signal_public_enable '0'
 	option local_client_enable '1'
 	option local_wifi_enable '1'
 	option local_traffic_enable '1'

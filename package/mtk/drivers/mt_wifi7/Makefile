@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt_wifi7
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 P4REV:=
 # Experimental paired MT7993 source from the Deco BE25-5G public GPL.
 # This is not the unavailable MediaTek 39602c SDK release.

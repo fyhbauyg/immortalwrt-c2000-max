@@ -161,9 +161,14 @@ local function handle(client)
 		return
 	end
 
+	local peer_addr = client:getpeername()
+	local server_addr = client:getsockname()
 	local ok, payload = pcall(app_http.process, action, request.body, {
 		authorization = request.headers.authorization or "",
-		cookie = request.headers.cookie or ""
+		cookie = request.headers.cookie or "",
+		remote_addr = peer_addr,
+		server_addr = server_addr,
+		origin = request.headers.origin or ""
 	})
 	if not ok or type(payload) ~= "table" then
 		payload = { code = "2", message = "request failed" }

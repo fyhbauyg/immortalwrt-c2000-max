@@ -131,6 +131,9 @@ if [[ -x "$LUA" ]]; then
 	"$LUA" "$ROOT/tests/test_modem_fixture.lua" "$ROOT"
 	"$LUA" "$ROOT/tests/test_remote_command_fixture.lua" "$ROOT"
 	"$LUA" "$ROOT/tests/test_cloud_controls_fixture.lua" "$ROOT"
+	"$LUA" "$ROOT/tests/test_protocol_session_fixture.lua" "$ROOT"
+	"$LUA" "$ROOT/tests/test_public_signal_fixture.lua" "$ROOT"
+	"$LUA" "$ROOT/tests/test_lan_boundary_fixture.lua" "$ROOT/files/usr/lib/lua/c2000max_app/lan_boundary.lua"
 fi
 
 TEXLUA="${TEXLUA:-$(command -v texlua || true)}"
@@ -149,6 +152,8 @@ sh -n "$ROOT/files/usr/sbin/c2000max-app-sim-switch"
 sh -n "$ROOT/files/etc/uci-defaults/99-c2000max-app-autostart"
 
 CONFIG="$ROOT/files/etc/config/c2000max_app"
+assert_contains "$CONFIG" "option local_signal_public_enable '0'"
+assert_not_contains "$ROOT/files/etc/uci-defaults/99-c2000max-app-autostart" 'local_signal_public_enable'
 for option in local remote
 do
 	assert_contains "$CONFIG" "option ${option}_enable '0'"
@@ -335,7 +340,7 @@ assert_contains "$HTTP" 'not core.management_password_configured() and'
 assert_contains "$HTTP" 'protocol.new_session(auth_kind)'
 assert_contains "$HTTP" 'core.management_password_configured())'
 assert_contains "$HTTP" 'protocol.current_des_response_context(context)'
-assert_contains "$HTTP" 'local function plaintext_signal_probe(context)'
+assert_contains "$HTTP" 'local function plaintext_signal_probe(context, data)'
 assert_contains "$HTTP" 'core.local_protocol_mode() == "legacy"'
 assert_contains "$HTTP" 'mac = device_id'
 assert_contains "$HTTP" 'protocol.reply({ code = "1" }, context)'
@@ -394,7 +399,9 @@ assert_contains "$RPC" 'json_add_string remote_command_message "$remote_command_
 
 VIEW="$LUCI_ROOT/htdocs/luci-static/resources/view/c2000max/app.js"
 assert_contains "$VIEW" 'node.checked = !!checked'
-assert_contains "$VIEW" '新版加密协议（AES，推荐）'
+assert_contains "$VIEW" '新版加密协议（AES）'
+assert_contains "$VIEW" 'local_signal_public_enable'
+assert_not_contains "$VIEW" '新版加密协议（AES，推荐）'
 assert_contains "$VIEW" "['local_protocol_mode']"
 assert_contains "$VIEW" '设备编号（只读）'
 assert_contains "$VIEW" "name: 'local_device_enable'"
@@ -564,7 +571,9 @@ assert_contains "$REMOTE" 'core.note_activity()'
 MAKEFILE="$ROOT/Makefile"
 assert_contains "$MAKEFILE" '+mosquitto-nossl'
 assert_contains "$MAKEFILE" 'PKG_VERSION:=1.11.0'
-assert_contains "$MAKEFILE" 'PKG_RELEASE:=2'
+assert_contains "$MAKEFILE" 'PKG_RELEASE:=5'
+assert_contains "$MAKEFILE" 'c2000max_app/public_signal.lua'
+assert_contains "$MAKEFILE" 'c2000max_app/lan_boundary.lua'
 assert_contains "$MAKEFILE" 'c2000max_app/led.lua'
 assert_contains "$CORE" 'elseif action == "led" then'
 assert_contains "$CORE" '"local_led_enable"'
@@ -584,7 +593,7 @@ assert_not_contains "$MAKEFILE" 'app_v30.js $(1)'
 LUCI_MAKEFILE="$LUCI_ROOT/Makefile"
 assert_contains "$LUCI_MAKEFILE" 'LUCI_TITLE:=LuCI configuration for C2000-MAX APP support'
 assert_contains "$LUCI_MAKEFILE" 'LUCI_DEPENDS:=+c2000max-app'
-assert_contains "$LUCI_MAKEFILE" 'PKG_RELEASE:=10'
+assert_contains "$LUCI_MAKEFILE" 'PKG_RELEASE:=11'
 assert_contains "$LUCI_MAKEFILE" '# call BuildPackage - OpenWrt buildroot signature'
 assert_contains "$ACL" '"c2000max_app": [ "set", "restart" ]'
 

@@ -14,6 +14,9 @@ const OPTIONS = [
 	{ name: 'local_signal_enable', title: '本地蜂窝与信号',
 		desc: '允许 APP 读取蜂窝详情、信号、小区和频点锁定状态。',
 		risk: true },
+	{ name: 'local_signal_public_enable', title: '局域网免登录读取信号与 SIM（默认关闭）',
+		desc: '兼容新版 APP 的免登录信号页面。开启后，同一 LAN 子网中的设备无需登录即可读取蜂窝射频信息以及 IMEI、IMSI、ICCID 等 SIM/设备身份。仅在局域网 APP 管理、本地蜂窝与信号均开启、使用 AES 协议且系统没有管理员密码时生效；不向 WAN 或回环代理开放。其他数据及控制仍需认证，短信、网络修改、重启等权限不会因此开启。',
+		risk: true },
 	{ name: 'local_client_enable', title: '本地终端列表',
 		desc: '允许 APP 读取已连接终端、IP、MAC 和租约信息。',
 		risk: true },
@@ -105,7 +108,7 @@ const INTERVALS = [
 ];
 
 const PROTOCOL_MODES = [
-	{ value: 'modern', title: '新版加密协议（AES，推荐）' },
+	{ value: 'modern', title: '新版加密协议（AES）' },
 	{ value: 'legacy', title: '传统兼容协议（DES）' }
 ];
 
@@ -132,6 +135,17 @@ const callRestart = rpc.declare({
 
 function flag(value) {
 	return value === true || value === 1;
+}
+
+function settingsStatusValid(status) {
+	return status != null && typeof status === 'object' &&
+		(status.local_protocol_mode === 'modern' || status.local_protocol_mode === 'legacy') &&
+		typeof status.root_password_configured === 'boolean' &&
+		OPTIONS.every(function(option) { return typeof status[option.name] === 'boolean'; }) &&
+		INTERVALS.every(function(option) {
+			return Number.isInteger(status[option.name]) &&
+				status[option.name] >= option.min && status[option.name] <= option.max;
+		});
 }
 
 function text(value, fallback) {
@@ -204,7 +218,7 @@ function protocolRow(status) {
 		E('div', { 'class': 'cbi-value-field' }, [
 			select,
 			E('div', { 'class': 'cbi-value-description' },
-				'鲲鹏无限 3.1/3.2 均保留两种协议，并根据设备探测结果选择；新版 APP 没有整体退回 2.x。通常保持 AES 即可。')
+				'鲲鹏无限 3.1/3.2 根据设备探测结果选择协议。3.2 的 AES 信号页面不携带登录凭据；需要信号详情时，可明确授权下方的局域网免登录读取，或使用传统兼容协议。切换后请完全退出并重新打开 APP。')
 		])
 	]);
 }
@@ -306,10 +320,17 @@ function statusRows(status) {
 
 return view.extend({
 	load: function() {
-		return L.resolveDefault(callStatus(), {});
+		return callStatus().then(function(status) {
+			return settingsStatusValid(status) ? status : null;
+		}).catch(function() { return null; });
 	},
 
 	save: async function() {
+		if (!settingsStatusValid(this.currentStatus)) {
+			ui.addNotification(null, E('p', {},
+				'尚未成功读取完整 APP 设置，已阻止保存。请重新加载页面后再试。'), 'error');
+			return;
+		}
 		const flags = OPTIONS.map(function(option) {
 			return document.getElementById(
 				'c2000max-app-' + option.name).checked;
@@ -320,6 +341,10 @@ return view.extend({
 		});
 		const protocolMode = document.getElementById(
 			'c2000max-app-local_protocol_mode').value;
+		if (protocolMode !== 'modern' && protocolMode !== 'legacy') {
+			ui.addNotification(null, E('p', {}, '本地 APP 协议模式无效。'), 'error');
+			return;
+		}
 		for (let i = 0; i < INTERVALS.length; i++) {
 			const option = INTERVALS[i];
 			const value = intervals[i];
@@ -331,7 +356,28 @@ return view.extend({
 				return;
 			}
 		}
+		const publicEnabled = document.getElementById(
+			'c2000max-app-local_signal_public_enable').checked;
+		const publicActive = publicEnabled && protocolMode === 'modern' &&
+			document.getElementById('c2000max-app-local_enable').checked &&
+			document.getElementById('c2000max-app-local_signal_enable').checked &&
+			!this.currentStatus.root_password_configured;
+		const wasPublicActive = flag(this.currentStatus.local_signal_public_enable) &&
+			this.currentStatus.local_protocol_mode === 'modern' &&
+			flag(this.currentStatus.local_enable) && flag(this.currentStatus.local_signal_enable) &&
+			!this.currentStatus.root_password_configured;
+		if ((publicEnabled && !flag(this.currentStatus.local_signal_public_enable) ||
+		     publicActive && !wasPublicActive) && !window.confirm(
+			'启用此兼容功能后，同一 LAN 子网中的设备无需登录即可读取 IMEI、IMSI、ICCID 和蜂窝射频信息。' +
+			'仅在无系统管理员密码且相关本地开关、AES 模式均满足时生效，不向 WAN 或回环代理开放。' +
+			'其他数据和控制仍需认证。是否明确允许这项局域网信息公开？'))
+			return;
+		if (protocolMode !== this.currentStatus.local_protocol_mode && !window.confirm(
+			'将切换本地 APP 协议。切换后需完全退出并重新打开 APP；传统兼容协议不会开启免登录读取。确认切换吗？'))
+			return;
 		const newlyRisky = OPTIONS.some(function(option, index) {
+			if (option.name === 'local_signal_public_enable')
+				return false;
 			return option.risk && flags[index] &&
 				!flag(this.currentStatus[option.name]);
 		}, this);
@@ -388,6 +434,18 @@ return view.extend({
 	},
 
 	render: function(status) {
+		if (!settingsStatusValid(status)) {
+			this.currentStatus = null;
+			return E('div', {}, [
+				E('h2', {}, 'APP 支持'),
+				E('div', { 'class': 'alert-message warning' },
+					'无法读取完整 APP 设置，已禁止保存，避免把现有协议或权限覆盖成默认值。请确认 APP 支持服务与页面版本一致后重新加载。'),
+				E('button', {
+					'class': 'btn cbi-button cbi-button-neutral',
+					'click': function() { window.location.reload(); }
+				}, '重新加载设置')
+			]);
+		}
 		this.currentStatus = status;
 		const isMaster = function(option) {
 			return option.name === 'local_enable' || option.name === 'remote_enable';
@@ -425,8 +483,8 @@ return view.extend({
 		return E('div', {}, [
 			E('h2', {}, 'APP 支持'),
 			E('div', { 'class': 'cbi-map-descr' },
-				'局域网和云端总开关默认关闭；下方功能权限已默认开启，' +
-				'启用对应总开关即可使用。当前界面：' +
+				'局域网和云端总开关默认关闭；普通功能权限已预选，免登录读取信号与 SIM 独立授权、默认关闭。' +
+				'请按需开启。当前界面：' +
 				text(status.app_plugin_version, status.app_build || '未知') + '。'),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, '总开关')

@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt_hwifi
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 WIFI_DRIVER_NAME:=mt_wifi7
 P4REV:=
 # Use the same patched source revision, but never share mutable build stamps

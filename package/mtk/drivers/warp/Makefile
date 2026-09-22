@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=warp
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 P4REV:=
 PKG_SOURCE_DATE:=2025-09-19
 PKG_SOURCE_VERSION:=9c1cfa

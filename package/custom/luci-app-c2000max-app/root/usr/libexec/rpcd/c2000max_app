@@ -7,6 +7,7 @@ local_enable
 remote_enable
 local_device_enable
 local_signal_enable
+local_signal_public_enable
 local_client_enable
 local_wifi_enable
 local_traffic_enable
@@ -454,6 +455,7 @@ case "$1" in
 		"remote_enable": "bool",
 		"local_device_enable": "bool",
 		"local_signal_enable": "bool",
+		"local_signal_public_enable": "bool",
 		"local_client_enable": "bool",
 		"local_wifi_enable": "bool",
 		"local_traffic_enable": "bool",
@@ -515,6 +517,11 @@ EOF
 				for option in $OPTIONS; do
 					json_get_var raw "$option"
 					case "$option:$raw" in
+						local_signal_public_enable:)
+							# Older LuCI pages do not know this privacy-sensitive
+							# opt-in. Preserve the explicit setting, default off.
+							raw="$(uci -q get c2000max_app.main.local_signal_public_enable)"
+							raw="${raw:-0}" ;;
 						local_led_enable:|remote_led_enable:)
 							raw="$(uci -q get "c2000max_app.main.$option")"
 							if [ -z "$raw" ]; then

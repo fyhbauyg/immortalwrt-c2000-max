@@ -1,0 +1,392 @@
+--- a/warp_main.c
++++ b/warp_main.c
+@@ -1165,6 +1165,10 @@
+ 	if (!warp)
+ 		return;
+ 
++	/* Pair with registration, even if ring start failed. Drop before remove
++	 * callbacks so shared reset sees zero only for the last client.
++	 */
++	warp_decrease_ref();
+ 	platform_driver_unregister(&warp->pdriver);
+ 	warp_entry_release(warp);
+ 	warp_entry_proc_exit(warp_ctrl, warp);
+@@ -1184,9 +1188,32 @@
+ 	struct wdma_entry *wdma = NULL;
+ 	struct wifi_entry *wifi = NULL;
+ 	struct warp_bus *bus = warp_bus_get();
++#if defined(WED_INTER_AGENT_SUPPORT) && defined(WED_HW_TX_SUPPORT) && !defined(WED_BMU_SUPPORT)
++	bool txbm_ready = false;
++#endif
++#if defined(WED_INTER_AGENT_SUPPORT) && defined(WED_RX_D_SUPPORT) && !defined(WED_BMU_SUPPORT)
++	bool rxbm_ready = false;
++#endif
++#if defined(WED_INTER_AGENT_SUPPORT) && defined(WED_RX_HW_RRO_3_0)
++	bool pagebm_ready = false;
++#endif
++#if defined(WED_INTER_AGENT_SUPPORT) && defined(WED_DYNAMIC_RXBM_SUPPORT)
++	bool dybm_ready = false;
++#endif
++#ifdef WED_HIF_TXD_SUPPORT
++	bool hif_txd_ready = false;
++#endif
+ 
+ 	if (check_and_update_warp(&warp, &wed, &wdma, &wifi, priv_data) == false)
+-		goto end;
++		return -ENODEV;
++
++#ifdef WED_HIF_TXD_SUPPORT
++	/* Allocate before enabling interrupts or publishing hardware addresses. */
++	ret = hif_txd_init(wed);
++	if (ret)
++		goto err;
++	hif_txd_ready = true;
++#endif
+ 
+ #ifdef WED_INTER_AGENT_SUPPORT
+ 	warp_dbg(WARP_DBG_INF, "%s(): wed:%p, wdma:%p, wifi:%p\n", __func__, wed, wdma,
+@@ -1205,7 +1232,8 @@
+ #ifndef WED_BMU_SUPPORT
+ 	ret = wed_txbm_init(wed, &warp->wifi.hw);
+ 	if (ret)
+-		goto end;
++		goto err;
++	txbm_ready = true;
+ #endif
+ #endif /*WED_HW_TX_SUPPORT*/
+ 
+@@ -1214,7 +1242,8 @@
+ #ifndef WED_BMU_SUPPORT
+ 	ret = wed_rx_bm_init(wed, &warp->wifi.hw);
+ 	if (ret)
+-		goto end;
++		goto err;
++	rxbm_ready = true;
+ #endif
+ #endif
+ 
+@@ -1222,7 +1251,8 @@
+ 	if (wifi->hw.hw_cap & BIT(WIFI_HW_CAP_RRO_3_0)) {
+ 		ret = wed_rx_page_bm_init(wed, &warp->wifi.hw);
+ 		if (ret)
+-			goto end;
++			goto err;
++		pagebm_ready = true;
+ 	}
+ #endif
+ 
+@@ -1230,7 +1260,8 @@
+ 	if (IS_WED_HW_CAP(wed, WED_HW_CAP_DYN_RXBM)) {
+ 		ret = regist_ul_dybm_task(wed);
+ 		if (ret)
+-			goto end;
++			goto err;
++		dybm_ready = true;
+ 	}
+ #endif /* WED_DYNAMIC_RXBM_SUPPORT */
+ 	/*hw setting for wed enable*/
+@@ -1250,13 +1281,44 @@
+ #endif
+ 
+ #ifdef WED_HIF_TXD_SUPPORT
+-	hif_txd_init(wed);
+ 	hif_txd_init_hw(wed, wifi);
+ #endif
+ #ifdef WED_PAO_SUPPORT
+ 	warp_pao_init_hw(wed, wifi);
+ #endif
+-end:
++	return 0;
++
++err:
++	/* Each failing allocator unwinds itself; release only completed stages.
++	 * Do not call the full warp_ring_exit() on partially initialized state.
++	 */
++#ifdef WED_INTER_AGENT_SUPPORT
++	warp_eint_ctrl_hw(wed, false);
++	warp_int_ctrl_hw(wed, wifi, wdma, ALL_INT_AGENT,
++			false, bus->pcie_ints_offset, warp->idx);
++	warp_reset_hw(wed, WARP_RESET_INTERFACE);
++#ifdef WED_DYNAMIC_RXBM_SUPPORT
++	if (dybm_ready)
++		unregist_ul_dybm_task(wed);
++#endif
++#ifdef WED_RX_HW_RRO_3_0
++	if (pagebm_ready)
++		wed_rx_page_bm_exit(wed);
++#endif
++#if defined(WED_RX_D_SUPPORT) && !defined(WED_BMU_SUPPORT)
++	if (rxbm_ready)
++		wed_rx_bm_exit(wed);
++#endif
++#if defined(WED_HW_TX_SUPPORT) && !defined(WED_BMU_SUPPORT)
++	if (txbm_ready)
++		wed_txbm_exit(wed);
++#endif
++#endif
++#ifdef WED_HIF_TXD_SUPPORT
++	if (hif_txd_ready)
++		hif_txd_exit(wed);
++#endif
++	warp_dbg(WARP_DBG_ERR, "%s(): ring initialization failed: %d\n", __func__, ret);
+ 	return ret;
+ }
+ EXPORT_SYMBOL(warp_ring_init);
+@@ -1276,8 +1338,6 @@
+ 
+ 	if (check_and_update_warp(&warp, &wed, &wdma, &wifi, priv_data) == false)
+ 		goto end;
+-
+-	warp_decrease_ref();
+ 
+ 	/*Reset Ring and HW setting*/
+ 	warp_eint_ctrl_hw(wed, false);
+--- a/warp_rx_bm.c
++++ b/warp_rx_bm.c
+@@ -50,6 +50,7 @@
+ 
+ 	if (!ring->cell) {
+ 		warp_dbg(WARP_DBG_ERR, "%s(): ring->cell is null return\n", __func__);
++		warp_dma_buf_free(wed->pdev, desc);
+ 		return;
+ 	}
+ 
+@@ -71,6 +72,7 @@
+ 	}
+ 
+ 	vfree(ring->cell);
++	ring->cell = NULL;
+ 	warp_dma_buf_free(wed->pdev, desc);
+ }
+ 
+@@ -115,6 +117,8 @@
+ 						SKB_DATA_ALIGN(SKB_BUF_HEADROOM_RSV + dma_cb->pkt_size)
+ 						+ SKB_DATA_ALIGN(SKB_BUF_TAILROOM_RSV), GFP_ATOMIC);
+ #endif
++			if (!pkt)
++				return -ENOMEM;
+ 			dma_cb->pkt = (struct sk_buff *)(pkt);
+ #ifdef WED_MEM_LEAK_DBG
+ 			pkt_alloc_mem((SKB_DATA_ALIGN(SKB_BUF_HEADROOM_RSV + dma_cb->pkt_size)
+@@ -126,6 +130,14 @@
+ 
+ 			dma_cb->pkt_pa = dma_map_single(&wdev->dev, dma_cb->pkt_va, dma_cb->pkt_size,
+ 							DMA_FROM_DEVICE);
++			if (dma_mapping_error(&wdev->dev, dma_cb->pkt_pa)) {
++#ifdef WED_MEM_LEAK_DBG
++				pkt_free_mem(pkt);
++#endif
++				put_page(virt_to_head_page(pkt));
++				memset(dma_cb, 0, sizeof(*dma_cb));
++				return -EIO;
++			}
+ 
+ 			/* advance to next ring descriptor address */
+ 			rxd = (struct warp_bm_rxdmad *)dma_cb->alloc_va;
+@@ -169,15 +181,37 @@
+ 	}
+ 
+ 	len =  sizeof(struct warp_dma_cb) * res->ring_len;
+-	ring->cell = (struct warp_dma_cb *)vmalloc(len);
++	ring->cell = (struct warp_dma_cb *)vzalloc(len);
+ 
+ 	if (!ring->cell) {
+ 		warp_dbg(WARP_DBG_ERR, "%s(): allocate ring->cell faild\n", __func__);
+ 		return ret;
+ 	}
+ 
+-	for (i = 0; i < res->ring_len; i++)
+-		wed_rx_bm_dma_cb_init(wed->pdev, res, desc, i, &ring->cell[i]);
++	for (i = 0; i < res->ring_len; i++) {
++		ret = wed_rx_bm_dma_cb_init(wed->pdev, res, desc, i, &ring->cell[i]);
++		if (ret) {
++			struct pci_dev *wdev = res->hif_dev;
++
++			/* Token registration has not happened yet. These buffers are
++			 * still ours; normal exit leaves registered buffers to HWIFI.
++			 */
++			while (i > 0) {
++				struct warp_dma_cb *cb = &ring->cell[--i];
++
++				if (!cb->pkt)
++					continue;
++				dma_unmap_single(&wdev->dev, cb->pkt_pa,
++						cb->pkt_size, DMA_FROM_DEVICE);
++#ifdef WED_MEM_LEAK_DBG
++				pkt_free_mem(cb->pkt);
++#endif
++				put_page(virt_to_head_page(cb->pkt));
++				memset(cb, 0, sizeof(*cb));
++			}
++			return ret;
++		}
++	}
+ 
+ 	ring->head = NULL;
+ 
+--- a/warp_rx_page_bm.c
++++ b/warp_rx_page_bm.c
+@@ -51,6 +51,8 @@
+ 
+ 		if (idx < bm->page_num) {
+ 			pkt = page_frag_alloc(&bm->rx_page, dma_cb->pkt_size, GFP_ATOMIC);
++			if (!pkt)
++				return -ENOMEM;
+ #ifdef WED_MEM_LEAK_DBG
+ 			pkt_alloc_mem((dma_cb->pkt_size), (void *)pkt, __builtin_return_address(0));
+ #endif	/* WED_MEM_LEAK_DBG */
+@@ -59,6 +61,14 @@
+ 			dma_cb->pkt_va = (unsigned char *)pkt;
+ 			dma_cb->pkt_pa = dma_map_single(&wdev->dev, dma_cb->pkt_va,
+ 						dma_cb->pkt_size, DMA_FROM_DEVICE);
++			if (dma_mapping_error(&wdev->dev, dma_cb->pkt_pa)) {
++#ifdef WED_MEM_LEAK_DBG
++				pkt_free_mem(pkt);
++#endif
++				put_page(virt_to_head_page(pkt));
++				memset(dma_cb, 0, sizeof(*dma_cb));
++				return -EIO;
++			}
+ 			rxd = (struct warp_bm_rxdmad *)dma_cb->alloc_va;
+ 			/* Set SDP0_L to DW0 */
+ 			WRITE_ONCE(rxd->sdp0, (dma_cb->pkt_pa & PARTIAL_RXDMAD_SDP0_L_MASK));
+@@ -161,6 +171,7 @@
+ 	struct warp_rx_ring *ring = bm->ring;
+ 	struct warp_dma_buf *desc = bm->desc;
+ 	u32 i = 0, len = 0;
++	int ret;
+ 
+ 	len = bm->rxd_len * bm->ring_len;
+ 
+@@ -173,16 +184,17 @@
+ 	/* allocat dma cb for store hif_rxd page location */
+ 	len = sizeof(struct warp_dma_cb) * bm->ring_len;
+ 
+-	ring->cell = vmalloc(len);
++	ring->cell = vzalloc(len);
+ 	if (!ring->cell) {
+ 		warp_dbg(WARP_DBG_ERR, "%s(): allocate ring->cell faild\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 
+-	wed_init_msdu_page_hash(bm);
+-
+-	for (i = 0; i < bm->ring_len; i++)
+-		wed_rx_page_bm_dma_cb_init(wed->pdev, bm, desc, i, &ring->cell[i]);
++	for (i = 0; i < bm->ring_len; i++) {
++		ret = wed_rx_page_bm_dma_cb_init(wed->pdev, bm, desc, i, &ring->cell[i]);
++		if (ret)
++			return ret;
++	}
+ 
+ 	return 0;
+ }
+@@ -199,7 +211,7 @@
+ {
+ 	struct pci_dev *wdev = bm->hif_dev;
+ 
+-	if (idx < bm->page_num) {
++	if (idx < bm->page_num && dma_cb->pkt) {
+ #ifdef WED_MEM_LEAK_DBG
+ 		pkt_free_mem((void *)dma_cb->pkt);
+ #endif	/* WED_MEM_LEAK_DBG */
+@@ -226,8 +238,10 @@
+ 
+ 	wed_exit_msdu_page_hash(bm);
+ 
+-	for (i = 0; i < ring_len; i++)
+-		wed_rx_page_bm_dma_cb_exit(wed, bm, i, &ring->cell[i]);
++	if (ring->cell) {
++		for (i = 0; i < ring_len; i++)
++			wed_rx_page_bm_dma_cb_exit(wed, bm, i, &ring->cell[i]);
++	}
+ 
+ 
+ 	if (bm->rx_page.va) {
+@@ -238,6 +252,7 @@
+ 	}
+ 
+ 	vfree(ring->cell);
++	ring->cell = NULL;
+ 	warp_dma_buf_free(wed->pdev, desc);
+ }
+ 
+@@ -279,6 +294,7 @@
+ 	bm->ring_len = warp_bm_ring_len(bm->page_num);
+ 	bm->rx_page_size = 0x80; // 128 bytes
+ 	bm->hif_dev = hw->hif_dev;
++	wed_init_msdu_page_hash(bm);
+ 
+ 	pr_info("%s: page_num=%u ring_len=%u\n",
+ 		__func__, bm->page_num, bm->ring_len);
+--- a/warp_tx_bm_v2.c
++++ b/warp_tx_bm_v2.c
+@@ -77,11 +77,27 @@
+ 			pkt_alloc_mem(dma_cb->pkt_size, (void *)pkt, __builtin_return_address(0));
+ #endif	/* WED_MEM_LEAK_DBG */
+ 			skb_id = idr_alloc(&bm->id, pkt, 0, bm->pkt_num, GFP_ATOMIC);
++			if (skb_id < 0) {
++#ifdef WED_MEM_LEAK_DBG
++				pkt_free_mem(pkt);
++#endif
++				put_page(virt_to_head_page(pkt));
++				return skb_id;
++			}
+ 
+ 			dma_cb->pkt = (struct sk_buff *)(pkt);
+ 			dma_cb->pkt_va = (unsigned char *)pkt;
+ 			dma_cb->pkt_pa = dma_map_single(&wdev->dev, dma_cb->pkt_va,
+ 						dma_cb->pkt_size, DMA_TO_DEVICE);
++			if (dma_mapping_error(&wdev->dev, dma_cb->pkt_pa)) {
++				idr_remove(&bm->id, skb_id);
++#ifdef WED_MEM_LEAK_DBG
++				pkt_free_mem(pkt);
++#endif
++				put_page(virt_to_head_page(pkt));
++				memset(dma_cb, 0, sizeof(*dma_cb));
++				return -EIO;
++			}
+ 
+ 			txd = (struct warp_bm_txdmad *)dma_cb->alloc_va;
+ 			WRITE_ONCE(txd->sdp0, (dma_cb->pkt_pa & PARTIAL_TXDMAD_SDP0_L_MASK));
+@@ -122,7 +138,7 @@
+ 
+ 	len = sizeof(struct warp_dma_cb) * bm->ring_len;
+ 
+-	ring->cell = vmalloc(len);
++	ring->cell = vzalloc(len);
+ 	if (!ring->cell) {
+ 		warp_dbg(WARP_DBG_ERR, "%s(): allocate ring->cell faild\n", __func__);
+ 		return -ENOMEM;
+--- a/wed.c
++++ b/wed.c
+@@ -1021,6 +1021,7 @@
+ 	pkt_free_mem(hif_txd_ctrl->hif_txd_addr[i]);
+ #endif
+ 	free_pages((unsigned long)hif_txd_ctrl->hif_txd_addr[i], 4);
++	hif_txd_ctrl->hif_txd_addr[i] = NULL;
+ err_alloc:
+ 	for (i -= 1; i >= 0; i--) {
+ 		dma_unmap_single(&wdev->dev, hif_txd_ctrl->hif_txd_addr_pa[i],
+@@ -1029,7 +1030,9 @@
+ 		pkt_free_mem(hif_txd_ctrl->hif_txd_addr[i]);
+ #endif
+ 		free_pages((unsigned long)hif_txd_ctrl->hif_txd_addr[i], 4);
+-	}
++		hif_txd_ctrl->hif_txd_addr[i] = NULL;
++	}
++	hif_txd_ctrl->hif_txd_segment_nums = 0;
+ 
+ 	return -ENOMEM;
+ }
+@@ -1052,7 +1055,9 @@
+ 		pkt_free_mem(hif_txd_ctrl->hif_txd_addr[i]);
+ #endif
+ 		free_pages((unsigned long)hif_txd_ctrl->hif_txd_addr[i], 4);
+-	}
++		hif_txd_ctrl->hif_txd_addr[i] = NULL;
++	}
++	hif_txd_ctrl->hif_txd_segment_nums = 0;
+ };
+ 
+ #endif

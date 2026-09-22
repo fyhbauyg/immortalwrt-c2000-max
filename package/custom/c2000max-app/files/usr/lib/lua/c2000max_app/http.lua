@@ -19,11 +19,18 @@ local function plaintext_password_authenticated(data)
 	return sys.user.checkpasswd("root", data.password)
 end
 
-local function plaintext_signal_probe(context)
+local function plaintext_signal_probe(context, data)
 	if core.local_protocol_mode() == "legacy" then
 		return { code = "1" },
 			protocol.current_des_response_context(context)
 	end
+	-- APP 3.2 deliberately omits its session on these read-only pages.
+	-- The separate opt-in module validates LAN transport and projects only
+	-- authorized signal/SIM fields; all business/control auth stays below.
+	local ok, public = pcall(function()
+		return require("c2000max_app.public_signal").response(data, context)
+	end)
+	if ok and type(public) == "table" then return public, context end
 
 	-- 鲲鹏无限 3.1.0 selects its AES local protocol only when the plaintext
 	-- /signal probe contains a non-empty signal[0].mac or signal[0].id.  This
@@ -125,7 +132,7 @@ function action_dispatch(action)
 		session_valid = protocol.valid_session(data, context,
 			core.management_password_configured())
 		if not session_valid then
-			local result, response_context = plaintext_signal_probe(context)
+			local result, response_context = plaintext_signal_probe(context, data)
 			protocol.reply(result, response_context)
 			return
 		end
@@ -158,6 +165,12 @@ local function merge_context(context, request_context)
 	request_context = type(request_context) == "table" and request_context or {}
 	context.authorization = request_context.authorization or ""
 	context.cookie = request_context.cookie or ""
+	context.remote_addr = request_context.remote_addr or ""
+	context.server_addr = request_context.server_addr or ""
+	context.origin = request_context.origin or ""
+	-- The standalone listener has no luci.http request/thread context.
+	-- Token lookup must use its explicit headers, including empty ones.
+	context.native_http = true
 	return context
 end
 
@@ -234,7 +247,7 @@ function process(action, body, request_context)
 		session_valid = protocol.valid_session(data, context,
 			core.management_password_configured())
 		if not session_valid then
-			local result, response_context = plaintext_signal_probe(context)
+			local result, response_context = plaintext_signal_probe(context, data)
 			return protocol.encode(result, response_context)
 		end
 	end

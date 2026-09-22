@@ -1,0 +1,396 @@
+--- a/mt_wifi/os/linux/cfg80211/cfg80211drv.c
++++ b/mt_wifi/os/linux/cfg80211/cfg80211drv.c
+@@ -1077,13 +1077,10 @@
+ {
+ 	CHANNEL_CTRL *pchctrl = NULL;
+ 
+-	/*phy mode setting */
+-	if (channel > 14) {
+-		wdev->PhyMode = (WMODE_A | WMODE_AN | WMODE_AC | WMODE_AX_5G);
+-	} else {
+-		wdev->PhyMode = (WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G);
+-	}
+-	/*change channel state to NONE*/
++	/* A channel/bandwidth request must not change the configured PHY mode.
++	 * In particular, do not silently remove BE from an EHT interface (or
++	 * enable it on a deliberately configured HE interface).
++	 */
+ 	pchctrl = hc_get_channel_ctrl(pAd->hdev_ctrl);
+ 	hc_set_ChCtrlChListStat(pchctrl, CH_LIST_STATE_NONE);
+ #ifdef EXT_BUILD_CHANNEL_LIST
+@@ -1092,8 +1089,6 @@
+ 	BuildChannelList(pAd, wdev);
+ #endif
+ 	RTMPSetPhyMode(pAd, wdev, wdev->PhyMode);
+-
+-	return;
+ }
+ 
+ BOOLEAN CFG80211DRV_AP_SetChanBw_byWdev(
+@@ -1101,189 +1096,189 @@
+ 	struct wifi_dev *wdev,
+ 	struct mt_priv_ops_chan_info *pchan_info)
+ {
+-	UCHAR bw = 0;
+-	UCHAR ext_cha = EXTCHA_BELOW;
+-	INT32 ret = FALSE, success = FALSE;
+-
+-	if (!pAd || !wdev || !pchan_info) {
++	UCHAR bw, ht_bw, vht_bw, he_bw, ext_cha, ht_disable = 0;
++	UCHAR old_ht_bw, old_vht_bw, old_he_bw, old_ext_cha, old_ht_disable;
++#ifdef DOT11_EHT_BE
++	UCHAR eht_bw, old_eht_bw;
++#endif
++	struct freq_cfg old_oper;
++	BOOLEAN same_bw, success = FALSE;
++	INT32 ret;
++
++	if (!pAd || !wdev || !pchan_info || !wdev->wpf_cfg || !wdev->wpf_op) {
+ 		MTWF_DBG(NULL, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-			"ERROR! invalid parameter. pAd=%p,wdev=%p, pchan_info=%p\n",
+-				pAd, wdev, pchan_info);
++			"ERROR! invalid channel/bandwidth context.\n");
+ 		return FALSE;
+ 	}
+ 
+-	/*kernel4.4 set bw*/
+-	if (MTK_NL80211_CHAN_WIDTH_20_NOHT == pchan_info->ChanType) {
+-		/*bw and ht check*/
+-		bw = wlan_operate_get_ht_bw(wdev);
+-		if (HT_BW_20 == (enum ht_bw_def)bw && 1 == pAd->CommonCfg.HT_Disable) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-				"bw 20 is already set.\n");
+-			goto set_channel;
+-		}
+-
++	/* Validate before modifying either configuration or operating state. */
++	ext_cha = wlan_config_get_ext_cha(wdev);
++	switch (pchan_info->ChanType) {
++	case MTK_NL80211_CHAN_WIDTH_20_NOHT:
++	case MTK_NL80211_CHAN_WIDTH_20:
++		ht_disable = pchan_info->ChanType == MTK_NL80211_CHAN_WIDTH_20_NOHT;
++		bw = BW_20;
++		he_bw = HE_BW_20;
++		ext_cha = EXTCHA_NONE;
++		break;
++	case MTK_NL80211_CHAN_WIDTH_40:
++		if (pchan_info->CenterChanId == pchan_info->ChanId + 2)
++			ext_cha = EXTCHA_ABOVE;
++		else if (pchan_info->ChanId == pchan_info->CenterChanId + 2)
++			ext_cha = EXTCHA_BELOW;
++		else
++			return FALSE;
++		bw = BW_40;
++		he_bw = HE_BW_2040;
++		break;
++	case MTK_NL80211_CHAN_WIDTH_80:
++		bw = BW_80;
++		he_bw = HE_BW_80;
++		break;
++	case MTK_NL80211_CHAN_WIDTH_160:
++		bw = BW_160;
++		he_bw = HE_BW_160;
++		break;
++	case MTK_NL80211_CHAN_WIDTH_80P80:
++#ifdef DOT11_EHT_BE
++		/* EHT has no non-contiguous 80+80 MHz operating width. */
++		if (WMODE_CAP_BE(wdev->PhyMode))
++			return FALSE;
++#endif
++		bw = BW_8080;
++		he_bw = HE_BW_8080;
++		break;
++	default:
++		MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_WARN,
++			"WARN, bw=%d not supported\n", pchan_info->ChanType);
++		return FALSE;
++	}
++	if (bw > BW_40 && wlan_config_get_ch_band(wdev) == CMD_CH_BAND_24G)
++		return FALSE;
++
++	ht_bw = rf_bw_2_ht_bw(bw);
++	vht_bw = rf_bw_2_vht_bw(bw);
++#ifdef DOT11_EHT_BE
++	eht_bw = rf_bw_2_eht_bw(bw);
++#endif
++	/* HT40 is also a sub-state of 80/160 MHz: compare the full RF width. */
++	same_bw = wlan_operate_get_bw(wdev) == bw &&
++		wlan_operate_get_ht_bw(wdev) == ht_bw &&
++		wlan_operate_get_vht_bw(wdev) == vht_bw &&
++		wlan_config_get_ht_bw(wdev) == ht_bw &&
++		wlan_config_get_vht_bw(wdev) == vht_bw &&
++		wlan_config_get_he_bw(wdev) == he_bw &&
++		pAd->CommonCfg.HT_Disable == ht_disable &&
++		(bw != BW_40 || (wlan_operate_get_ext_cha(wdev) == ext_cha &&
++			wlan_config_get_ext_cha(wdev) == ext_cha));
++#ifdef DOT11_EHT_BE
++	if (WMODE_CAP_BE(wdev->PhyMode))
++		same_bw = same_bw && wlan_operate_get_eht_bw(wdev) == eht_bw &&
++			wlan_config_get_eht_bw(wdev) == eht_bw;
++#endif
++	if (same_bw && wdev->channel == pchan_info->ChanId)
++		return TRUE;
++
++	/* Do not change bandwidth if another channel operation owns the radio. */
++	if (!TakeChannelOpCharge(pAd, wdev, CH_OP_OWNER_SET_CHN, TRUE))
++		return FALSE;
++
++	old_ht_bw = wlan_config_get_ht_bw(wdev);
++	old_vht_bw = wlan_config_get_vht_bw(wdev);
++	old_he_bw = wlan_config_get_he_bw(wdev);
++	old_ext_cha = wlan_config_get_ext_cha(wdev);
++	old_ht_disable = pAd->CommonCfg.HT_Disable;
++#ifdef DOT11_EHT_BE
++	old_eht_bw = wlan_config_get_eht_bw(wdev);
++#endif
++	os_zero_mem(&old_oper, sizeof(old_oper));
++	phy_freq_get_cfg(wdev, &old_oper);
++	old_oper.ht_bw = wlan_operate_get_ht_bw(wdev);
++	old_oper.vht_bw = wlan_operate_get_vht_bw(wdev);
++	old_oper.ext_cha = wlan_operate_get_ext_cha(wdev);
++#ifdef DOT11_EHT_BE
++	old_oper.eht_bw = wlan_operate_get_eht_bw(wdev);
++#endif
++	pAd->ApCfg.iwpriv_event_flag = TRUE;
++	pAd->ApCfg.set_ch_async_flag = FALSE;
++	RTMP_OS_REINIT_COMPLETION(&pAd->ApCfg.set_ch_aync_done);
++
++	if (!same_bw) {
+ 		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-		wlan_config_set_ht_bw(wdev, BW_20);
+-		if (WLAN_OPER_OK == wlan_operate_set_ht_bw(wdev, HT_BW_20, EXTCHA_NONE)) {
+-			pAd->CommonCfg.HT_Disable = 1;/*HT disable*/
++		/* The PHY loader reads the other widths from configuration. Stage
++		 * the whole tuple before applying it, not independent HT/VHT/EHT
++		 * setters which may return early on an unchanged sub-width.
++		 */
++		wlan_config_set_ht_bw(wdev, ht_bw);
++		wlan_config_set_vht_bw(wdev, vht_bw);
++		wlan_config_set_he_bw(wdev, he_bw);
++		wlan_config_set_ext_cha(wdev, ext_cha);
++#ifdef DOT11_EHT_BE
++		wlan_config_set_eht_bw(wdev, eht_bw);
++#endif
++		pAd->CommonCfg.HT_Disable = ht_disable;
++	}
++
++	if (wdev->channel != pchan_info->ChanId) {
++		/* Channel switching consumes the staged widths. Do not apply a
++		 * new 40 MHz secondary channel to the old primary channel first.
++		 */
++		if (!rtmp_set_channel(pAd, wdev, pchan_info->ChanId)) {
++			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
++				"ERROR! channel %d not accepted.\n", pchan_info->ChanId);
++			goto restore_bw;
++		}
++	} else if (!same_bw) {
++		ret = wlan_operate_sync_bw_for_ht_eht_vht(wdev, bw);
++		if (ret != WLAN_OPER_OK) {
++			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
++				"ERROR! bandwidth %d rejected (ret=%d).\n", bw, ret);
++			goto restore_bw;
++		}
++	}
++	/* SetCommonHT can itself load HT bandwidth from staged configuration.
++	 * Leave queued CSA to its completion path, not the old primary channel.
++	 */
++	if (!same_bw && !pAd->ApCfg.set_ch_async_flag)
++		SetCommonHtVht(pAd, wdev);
++	/* A queued CSA is only accepted, not completed. Synchronous calls
++	 * must agree with the resulting driver state; a silent no-op or a
++	 * regulatory/coexistence clamp must not be reported as exact success.
++	 */
++	if (!pAd->ApCfg.set_ch_async_flag &&
++		(wdev->channel != pchan_info->ChanId || wlan_operate_get_bw(wdev) != bw ||
++		 (bw == BW_40 && wlan_operate_get_ext_cha(wdev) != ext_cha)))
++		goto restore_bw;
++	success = TRUE;
++	goto out;
++
++restore_bw:
++	if (!same_bw) {
++		wlan_config_set_ht_bw(wdev, old_ht_bw);
++		wlan_config_set_vht_bw(wdev, old_vht_bw);
++		wlan_config_set_he_bw(wdev, old_he_bw);
++		wlan_config_set_ext_cha(wdev, old_ext_cha);
++#ifdef DOT11_EHT_BE
++		wlan_config_set_eht_bw(wdev, old_eht_bw);
++#endif
++		pAd->CommonCfg.HT_Disable = old_ht_disable;
++		/* Best effort: firmware/resource failures cannot be made atomic.
++		 * Never report success merely because rollback was attempted.
++		 */
++		if (!pAd->ApCfg.set_ch_async_flag) {
++			operate_loader_phy(wdev, &old_oper);
+ 			SetCommonHtVht(pAd, wdev);
+-			ret = TRUE;
+-		} else {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-				"ERROR! wlan_operate_set_ht_bw 20 FAIL\n");
+-			ret = FALSE;
+-		}
+-	} else if (MTK_NL80211_CHAN_WIDTH_20 == pchan_info->ChanType) {
+-		/*bw and ht check*/
+-		bw = wlan_operate_get_ht_bw(wdev);
+-		if (HT_BW_20 == (enum ht_bw_def)bw && 0 == pAd->CommonCfg.HT_Disable) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-				"bw 20 is already set.\n");
+-			goto set_channel;
+-		}
+-		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-		wlan_config_set_ht_bw(wdev, BW_20);
+-		if (WLAN_OPER_OK == wlan_operate_set_ht_bw(wdev, HT_BW_20, EXTCHA_NONE)) {
+-			pAd->CommonCfg.HT_Disable = 0;/*HT enable*/
+-			SetCommonHtVht(pAd, wdev);
+-			ret = TRUE;
+-		} else {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-				"ERROR! wlan_operate_set_ht_bw 20 FAIL\n");
+-			ret = FALSE;
+-		}
+-	} else if (MTK_NL80211_CHAN_WIDTH_40 == pchan_info->ChanType) {
+-		/*extra_bw*/
+-		if (pchan_info->CenterChanId > pchan_info->ChanId)
+-			ext_cha = EXTCHA_ABOVE;
+-		else
+-			ext_cha = EXTCHA_BELOW;
+-
+-		/*bw and ht check*/
+-		bw = wlan_operate_get_ht_bw(wdev);
+-
+-		if (HT_BW_40 == (enum ht_bw_def)bw && ext_cha == wlan_operate_get_ext_cha(wdev)
+-			&& 0 == pAd->CommonCfg.HT_Disable) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-				"bw 40 ext_bw(%s) is already set.\n",
+-				ext_cha == EXTCHA_ABOVE ? "above":"below");
+-			goto set_channel;
+-		}
+-		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-
+-		/*set bw*/
+-		wlan_config_set_ht_bw(wdev, BW_40);
+-		if (WLAN_OPER_OK == wlan_operate_set_ht_bw(wdev, HT_BW_40, ext_cha)) {
+-			pAd->CommonCfg.HT_Disable = 0;/*HT enable*/
+-			SetCommonHtVht(pAd, wdev);
+-			ret = TRUE;
+-		} else {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-				"ERROR! wlan_operate_set_ht_bw 40 FAIL\n");
+-			ret = FALSE;
+-		}
+-	} else if (MTK_NL80211_CHAN_WIDTH_80 == pchan_info->ChanType) {
+-		/*bw and ht check*/
+-		bw = wlan_operate_get_vht_bw(wdev);
+-		if (VHT_BW_80 == (enum vht_config_bw)bw && 0 == pAd->CommonCfg.HT_Disable) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-				"bw 80 is already set.\n");
+-			goto set_channel;
+-		}
+-		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-		/*set bw*/
+-		if (WLAN_OPER_OK == wlan_operate_set_vht_bw(wdev, VHT_BW_80)) {
+-			pAd->CommonCfg.HT_Disable = 0;/*HT disable*/
+-			ret = TRUE;
+-		} else {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-				"ERROR! wlan_operate_set_ht_bw 80 FAIL\n");
+-			ret = FALSE;
+-		}
+-
+-	} else if (MTK_NL80211_CHAN_WIDTH_80P80 == pchan_info->ChanType) {
+-		/*bw and vht check*/
+-		bw = wlan_operate_get_vht_bw(wdev);
+-		if (VHT_BW_8080 == (enum vht_config_bw)bw && 0 == pAd->CommonCfg.HT_Disable) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-				"bw 8080 is already set.\n");
+-			goto set_channel;
+-		}
+-		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-		/*set bw*/
+-		if (WLAN_OPER_OK == wlan_operate_set_vht_bw(wdev, VHT_BW_8080)) {
+-			pAd->CommonCfg.HT_Disable = 0;/*HT disable*/
+-			wlan_config_set_he_bw(wdev, HE_BW_8080);
+-			ret = TRUE;
+-		} else {
+-			MTWF_DBG(pAd, DBG_CAT_CFG, CATCFG_CMD, DBG_LVL_ERROR,
+-				"ERROR! wlan_operate_set_ht_bw 8080 FAIL\n");
+-			ret = FALSE;
+-		}
+-	} else if (MTK_NL80211_CHAN_WIDTH_160 == pchan_info->ChanType) {
+-		/*bw and ht check*/
+-		bw = wlan_operate_get_vht_bw(wdev);
+-		if (VHT_BW_160 == (enum vht_config_bw)bw && 0 == pAd->CommonCfg.HT_Disable) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-				"bw 160 is already set.\n");
+-			goto set_channel;
+-		}
+-		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-		/*set vbw*/
+-		if (WLAN_OPER_OK == wlan_operate_set_vht_bw(wdev, VHT_BW_160)) {
+-			pAd->CommonCfg.HT_Disable = 0;/*HT disable*/
+-			wlan_config_set_he_bw(wdev, HE_BW_160);
+-			ret = TRUE;
+-		} else {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-				"ERROR! wlan_operate_set_ht_bw 160 FAIL\n");
+-			ret = FALSE;
+-		}
+-	} else {
+-		MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_WARN,
+-			"WARN, bw=%d not support\n", pchan_info->ChanType);
+-		CFG8021DRV_AP_PHYINIT(pAd, wdev, pchan_info->ChanId);
+-		ret = FALSE;
+-	}
+-
+-set_channel:
+-	/*bw and channel is not same as input check*/
+-	MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-		"ret:%d (FALSE:%d), wdev->channel:%d, pchan_info->ChanId:%d\n",
+-		ret, FALSE, wdev->channel, pchan_info->ChanId);
+-
+-	/*set channel*/
+-	if (wdev->channel != pchan_info->ChanId) {
+-		/*To do set channel, need TakeChannelOpCharge first*/
+-		if (!TakeChannelOpCharge(pAd, wdev, CH_OP_OWNER_SET_CHN, TRUE)) {
+-			MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_ERROR,
+-				"TakeChannelOpCharge fail for SET channel!!\n");
+-			return FALSE;
+-		}
+-		pAd->ApCfg.iwpriv_event_flag = TRUE;
+-
+-		RTMP_OS_REINIT_COMPLETION(&pAd->ApCfg.set_ch_aync_done);
+-		success = rtmp_set_channel(pAd, wdev, pchan_info->ChanId);
+-
+-		/*non-csa flow should release ChannelOpCharge here,
+-		CSA flow will release ChannelOpCharge when CSA count down to zero*/
+-		if (pAd->ApCfg.set_ch_async_flag == FALSE) {
+-			pAd->ApCfg.iwpriv_event_flag = FALSE;
+-			ReleaseChannelOpCharge(pAd, wdev, CH_OP_OWNER_SET_CHN);
+-		}
+-
+-		if (success == FALSE) {
+-			MTWF_DBG(pAd, DBG_CAT_CFG, CATCFG_CMD, DBG_LVL_ERROR,
+-				"ERROR! channel(%d) set fail\n", pchan_info->ChanId);
+-			return FALSE;
+-		}
+-	} else {
+-		MTWF_DBG(pAd, DBG_CAT_CHN, CATCHN_CHN, DBG_LVL_INFO,
+-			"channel(%d) is already set!\n", pchan_info->ChanId);
+-	}
+-	return TRUE;
+-
+-}
++		}
++	}
++out:
++	/* Accepted asynchronous CSA releases ownership on completion. */
++	if (!pAd->ApCfg.set_ch_async_flag) {
++		pAd->ApCfg.iwpriv_event_flag = FALSE;
++		ReleaseChannelOpCharge(pAd, wdev, CH_OP_OWNER_SET_CHN);
++	}
++	return success;
++}
++
+ 
+ 
+ int CFG80211DRV_AP_OpsSetChannel(

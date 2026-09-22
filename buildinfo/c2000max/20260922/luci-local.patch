@@ -1,0 +1,398 @@
+diff --git a/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js b/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js
+index ddd5d5c2..d154e0ef 100644
+--- a/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js
++++ b/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js
+@@ -55,11 +55,12 @@ return view.extend({
+ 		};
+ 
+ 		o = s.option(form.Flag, 'drop_invalid', _('Drop invalid packets'));
+-		if (L.hasSystemFeature('fullcone')) {
+-			o = s.option(form.Flag, 'fullcone', _('Enable FullCone NAT'));
+-			if (fw4)
+-				o = s.option(form.Flag, 'fullcone6', _('Enable FullCone NAT6'));
+-		}
++
++		o = s.option(form.Flag, 'fullcone', _('Fullcone NAT'),
++			_('Global gate for SONiC-style fullcone NAT. When enabled, each zone can individually activate fullcone in its settings.'));
++		o.default = '0';
++		o.rmempty = true;
++		o.optional = true;
+ 
+ 		let p = [
+ 			s.option(form.ListValue, 'input', _('Input')),
+@@ -181,6 +182,11 @@ return view.extend({
+ 			return null;
+ 		};
+ 
++		o = s.taboption('general', form.Flag, 'fullcone', _('Fullcone NAT'),
++			_('Enable SONiC-style fullcone NAT for this zone. The global Fullcone NAT gate must also be enabled. For C2000MAX, keep the protocol selection at UDP so only those flows bypass HNAT.'));
++		o.editable = true;
++		o.depends('masq', '1');
++
+ 		o = s.taboption('general', form.Flag, 'mtu_fix', _('MSS clamping'));
+ 		o.modalonly = true;
+ 
+@@ -283,6 +289,21 @@ return view.extend({
+ 		o.placeholder = '0.0.0.0/0';
+ 		o.modalonly = true;
+ 
++		o = s.taboption('advanced', form.MultiValue, 'fullcone_proto',
++			_('Fullcone protocols'),
++			_('Restrict FullCone NAT to selected L4 protocols. UDP is recommended on C2000MAX; FullCone flows use the software NAT path while ordinary flows remain eligible for MediaTek HNAT.'));
++		o.value('tcp', _('TCP'));
++		o.value('udp', _('UDP'));
++		o.value('udplite', _('UDP-Lite'));
++		o.value('sctp', _('SCTP'));
++		o.value('dccp', _('DCCP'));
++		o.depends('fullcone', '1');
++		o.modalonly = true;
++		o.optional = true;
++		o.placeholder = _('All protocols');
++		o.display_size = 5;
++		o.delimiter = ' ';
++
+ 		o = s.taboption('conntrack', form.Flag, 'masq_allow_invalid', _('Allow "invalid" traffic'), _('Do not install extra rules to reject forwarded traffic with conntrack state <em>invalid</em>. This may be required for complex asymmetric route setups.'));
+ 		o.modalonly = true;
+ 
+diff --git a/applications/luci-app-sqm/htdocs/luci-static/resources/view/network/sqm.js b/applications/luci-app-sqm/htdocs/luci-static/resources/view/network/sqm.js
+index 6acb25fa..1df30b30 100644
+--- a/applications/luci-app-sqm/htdocs/luci-static/resources/view/network/sqm.js
++++ b/applications/luci-app-sqm/htdocs/luci-static/resources/view/network/sqm.js
+@@ -67,6 +67,12 @@ return view.extend({
+ 				  " active queue length management (AQM) " +
+ 				  " and prioritisation on one " +
+ 				  "network interface.");
++		if (uci.get('sqm', 'nr_game'))
++			m.description += '<p>5G NR 游戏预设使用 eth2，默认关闭。请先测量繁忙时段可稳定达到的速率，' +
++				'将下载/上传分别填为该速率的约 80%～90%（单位 kbit/s），再启用；0 表示该方向不整形。' +
++				'启用任意 SQM 队列后将暂停硬件/软件流量加速和 C2000MAX 设备限速，关闭 SQM 后恢复原加速选择。' +
++				'请勿同时叠加其它插件的整形队列。5G 带宽波动时需适当降低整形速率；此功能改善满载排队延迟，' +
++				'不能消除基站拥塞或保证游戏 ping，最高吞吐也会受到 CPU 限制。</p>';
+ 
+ 		s = m.section(form.TypedSection, 'queue', _('Queues'));
+ 		s.tab("tab_basic", _("Basic Settings"));
+diff --git a/modules/luci-compat/luasrc/model/network.lua b/modules/luci-compat/luasrc/model/network.lua
+index e891b4fa..743713fc 100644
+--- a/modules/luci-compat/luasrc/model/network.lua
++++ b/modules/luci-compat/luasrc/model/network.lua
+@@ -756,9 +756,14 @@ function get_interfaces(self)
+ 	_uci:foreach("wireless", "wifi-iface",
+ 		function(s)
+ 			if s.device then
+-				num[s.device] = num[s.device] and num[s.device] + 1 or 1
+-				local i = "%s.network%d" %{ s.device, num[s.device] }
+-				wfs[i] = interface(i)
++				local devices = type(s.device) == "table" and s.device or { s.device }
++				for _, device in ipairs(devices) do
++					if type(device) == "string" and #device > 0 then
++						num[device] = num[device] and num[device] + 1 or 1
++						local i = "%s.network%d" %{ device, num[device] }
++						wfs[i] = interface(i)
++					end
++				end
+ 			end
+ 		end)
+ 
+diff --git a/modules/luci-lua-runtime/Makefile b/modules/luci-lua-runtime/Makefile
+old mode 100644
+new mode 100755
+index c06190cb..41807a5f
+--- a/modules/luci-lua-runtime/Makefile
++++ b/modules/luci-lua-runtime/Makefile
+@@ -7,6 +7,9 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=luci-lua-runtime
++PKG_SRC_VERSION:=26.248.12024~e9cdc0a
++PKG_GITBRANCH:=LuCI c2000max-v37.01 branch
++PKG_RELEASE:=3
+ 
+ LUCI_TYPE:=mod
+ LUCI_BASENAME:=lua-runtime
+diff --git a/modules/luci-lua-runtime/src/mkversion.sh b/modules/luci-lua-runtime/src/mkversion.sh
+index e2d02c1c..30a467ef 100755
+--- a/modules/luci-lua-runtime/src/mkversion.sh
++++ b/modules/luci-lua-runtime/src/mkversion.sh
+@@ -11,7 +11,7 @@ if pcall(dofile, "/etc/openwrt_release") and _G.DISTRIB_DESCRIPTION then
+ 	if _G.DISTRIB_REVISION then
+ 		distrevision = _G.DISTRIB_REVISION
+ 		if not distversion:find(distrevision,1,true) then
+-			distversion = distversion .. " " .. distrevision
++			distversion = distversion
+ 		end
+ 	end
+ else
+diff --git a/modules/luci-mod-system/Makefile b/modules/luci-mod-system/Makefile
+index a6d5a7a4..e0191c4c 100644
+--- a/modules/luci-mod-system/Makefile
++++ b/modules/luci-mod-system/Makefile
+@@ -8,10 +8,10 @@ include $(TOPDIR)/rules.mk
+ 
+ LUCI_TITLE:=LuCI Administration - Global System Settings
+ LUCI_DEPENDS:=+luci-base
++PKG_RELEASE:=2
+ 
+ PKG_LICENSE:=Apache-2.0
+ 
+ include ../../luci.mk
+ 
+ # call BuildPackage - OpenWrt buildroot signature
+-
+diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
+index 92e1dd49..4f95aa1d 100644
+--- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
+@@ -10,18 +10,41 @@ var callReboot = rpc.declare({
+ 	expect: { result: 0 }
+ });
+ 
++var callOfficialStatus = rpc.declare({
++	object: 'c2000max',
++	method: 'official_boot_status',
++	expect: { '': {} }
++});
++
++var callOfficialOnce = rpc.declare({
++	object: 'c2000max',
++	method: 'official_boot_once',
++	expect: { '': {} }
++});
++
+ return view.extend({
+ 	load: function() {
+-		return uci.changes();
++		return Promise.all([
++			uci.changes(),
++			callOfficialStatus().catch(function(e) {
++				return { ready: false, armed: false, message: e.message };
++			})
++		]);
+ 	},
+ 
+-	render: function(changes) {
++	render: function(data) {
++		var changes = data[0] || {};
++		var official = data[1] || {};
++		var officialButtonAttrs = {
++			'class': 'cbi-button cbi-button-negative important',
++			'click': ui.createHandlerFn(this, 'handleOfficialOnce')
++		};
+ 		var body = E([
+ 			E('h2', _('Reboot')),
+ 			E('p', {}, _('Reboots the operating system of your device'))
+ 		]);
+ 
+-		for (var config in (changes || {})) {
++		for (var config in changes) {
+ 			body.appendChild(E('p', { 'class': 'alert-message warning' },
+ 				_('Warning: There are unsaved changes that will get lost on reboot!')));
+ 			break;
+@@ -33,30 +56,72 @@ return view.extend({
+ 			'click': ui.createHandlerFn(this, 'handleReboot')
+ 		}, _('Perform reboot')));
+ 
++		if (!official.ready || official.armed)
++			officialButtonAttrs.disabled = 'disabled';
++
++		body.appendChild(E('div', {
++			'class': 'cbi-section',
++			'style': 'margin-top:2em'
++		}, [
++			E('h3', {}, _('官方系统 Flash 保护')),
++			E('p', {}, _('本版本将 SPI-NOR 分区设为只读，不向官方系统或启动环境写入标记，因此停用一次性切换。需要进入官方系统时，请先关机再拔出 TF 卡；需要回到 ImmortalWrt 时，关机后插回 TF 卡。')),
++			E('p', {
++				'class': official.ready ? 'alert-message notice' : 'alert-message warning'
++			}, official.message || _('正在检查启动环境…')),
++			E('button', officialButtonAttrs,
++				official.armed ? _('已安排一次性启动') : _('重启到官方系统一次'))
++		]));
++
+ 		return body;
+ 	},
+ 
+-	handleReboot: function(ev) {
+-		return callReboot().then(function(res) {
+-			if (res != 0) {
+-				L.ui.addNotification(null, E('p', _('The reboot command failed with code %d').format(res)));
+-				L.raise('Error', 'Reboot failed');
+-			}
+-
++	showRebootWait: function() {
++		L.ui.showModal(_('Rebooting…'), [
++			E('p', { 'class': 'spinning' }, _('Waiting for device...'))
++		]);
++		window.setTimeout(function() {
+ 			L.ui.showModal(_('Rebooting…'), [
+-				E('p', { 'class': 'spinning' }, _('Waiting for device...'))
++				E('p', { 'class': 'spinning alert-message warning' },
++					_('Device unreachable! Still waiting for device...'))
+ 			]);
++		}, 150000);
++		L.ui.awaitReconnect();
++	},
+ 
+-			window.setTimeout(function() {
+-				L.ui.showModal(_('Rebooting…'), [
+-					E('p', { 'class': 'spinning alert-message warning' },
+-						_('Device unreachable! Still waiting for device...'))
+-				]);
+-			}, 150000);
++	handleReboot: function() {
++		return callReboot().then(L.bind(function(res) {
++			if (res != 0)
++				throw new Error(_('The reboot command failed with code %d').format(res));
++			this.showRebootWait();
++		}, this)).catch(function(e) {
++			L.ui.addNotification(null, E('p', e.message));
++		});
++	},
+ 
+-			L.ui.awaitReconnect();
+-		})
+-		.catch(function(e) { L.ui.addNotification(null, E('p', e.message)) });
++	handleOfficialOnce: function() {
++		return ui.showModal(_('确认一次性启动官方系统'), [
++			E('p', {}, _('路由器将从 SPI-NOR 启动官方系统一次。请确保当前没有正在进行的刷写、升级或关键业务。')),
++			E('div', { 'class': 'right' }, [
++				E('button', {
++					'class': 'btn',
++					'click': ui.hideModal
++				}, _('取消')),
++				' ',
++				E('button', {
++					'class': 'btn cbi-button-negative important',
++					'click': ui.createHandlerFn(this, function() {
++						return callOfficialOnce().then(L.bind(function(result) {
++							if (!result || !result.ready || !result.armed)
++								throw new Error((result && result.message) || _('无法安排官方系统启动。'));
++							this.showRebootWait();
++						}, this)).catch(function(e) {
++							ui.hideModal();
++							L.ui.addNotification(null, E('p', e.message));
++						});
++					})
++				}, _('确认并重启'))
++			])
++		]);
+ 	},
+ 
+ 	handleSaveApply: null,
+diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js
+index 2b9b8f5f..33dfcf2a 100644
+--- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js
++++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js
+@@ -45,6 +45,21 @@ const callTimezone = rpc.declare({
+ 	expect: { '': {} }
+ });
+ 
++const callGetWifiPerformanceState = rpc.declare({
++	object: 'luci.mtwifi',
++	method: 'getWifiPerformanceState',
++	nobatch: true,
++	expect: { enabled: false, runtime_available: false, runtime_applied: false }
++});
++
++const callSetWifiPerformanceState = rpc.declare({
++	object: 'luci.mtwifi',
++	method: 'setWifiPerformanceState',
++	params: [ 'enabled' ],
++	nobatch: true,
++	expect: { ok: false, enabled: false, runtime_available: false, runtime_applied: false }
++});
++
+ function formatTime(epoch) {
+ 	const date = new Date(epoch * 1000);
+ 	const zn = uci.get('system', '@system[0]', 'zonename')?.replaceAll(' ', '_') || 'UTC';
+@@ -97,12 +112,17 @@ return view.extend({
+ 			callTimezone(),
+ 			callGetUnixtime(),
+ 			uci.load('luci'),
+-			uci.load('system')
++			uci.load('system'),
++			L.resolveDefault(callGetWifiPerformanceState(), {
++				enabled: false, runtime_available: false, runtime_applied: false
++			})
+ 		]);
+ 	},
+ 
+-	render([ntpd_enabled, timezones, unixtime]) {
+-		let m, s, o;
++	render(data) {
++		let ntpd_enabled = data[0], timezones = data[1], unixtime = data[2];
++		let wifiPerformance = data[5] || { enabled: false, runtime_available: false, runtime_applied: false };
++		let m, s, o, runtimeText;
+ 
+ 		m = new form.Map('system',
+ 			_('System'),
+@@ -118,6 +138,7 @@ return view.extend({
+ 		s.tab('logging', _('Logging'));
+ 		s.tab('timesync', _('Time Synchronization'));
+ 		s.tab('language', _('Language and Style'));
++		s.tab('wifi_performance', '无线性能');
+ 
+ 		/*
+ 		 * System Properties
+@@ -157,6 +178,43 @@ return view.extend({
+ 		o.value('h12', _('12-Hour Clock'));
+ 		o.value('h23', _('24-Hour Clock'));
+ 
++		/*
++		 * C2000-MAX wireless performance
++		 */
++
++		if (!wifiPerformance.runtime_available)
++			runtimeText = '无线驱动当前未运行；设置会在下次无线启动时生效。';
++		else if (wifiPerformance.runtime_applied)
++			runtimeText = wifiPerformance.enabled ? '驱动当前已处于高性能状态。' : '驱动当前处于普通状态。';
++		else
++			runtimeText = '保存模式与驱动当前状态不一致，请重新保存或重启设备。';
++
++		o = s.taboption('wifi_performance', form.ListValue, '_wifi_performance_mode',
++			'无线性能模式',
++			'选择后点击“保存并应用”。高性能模式会关闭 MT7993 的 PCIe L1SS 与无线低功耗子功能，可能增加功耗和温度；不会修改法规发射功率、BA 512 上限、HW RRO mode 5 或温控保护。');
++		o.value('0', '普通模式（默认）');
++		o.value('1', '高性能（鸡血）模式');
++		o.rmempty = false;
++		o.load = function() {
++			return wifiPerformance.enabled ? '1' : '0';
++		};
++		o.write = function(section_id, formvalue) {
++			let enabled = (formvalue == '1');
++
++			return callSetWifiPerformanceState(enabled).then(function(result) {
++				if (!result || (result.ok !== true && result.ok !== 1))
++					throw new Error(result?.error || '无线性能模式切换失败，未修改原来的设置。');
++
++				wifiPerformance = result;
++				ui.addNotification(null, E('p', enabled
++					? '无线高性能模式已启用。'
++					: '已恢复普通无线模式。'), 'info');
++			});
++		};
++
++		o = s.taboption('wifi_performance', form.DummyValue, '_wifi_performance_status', '当前运行状态');
++		o.cfgvalue = function() { return runtimeText };
++
+ 		/*
+ 		 * Logging
+ 		 */
+diff --git a/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json b/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json
+index 379d89fc..e501919c 100644
+--- a/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json
++++ b/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json
+@@ -4,6 +4,7 @@
+ 		"read": {
+ 			"ubus": {
+ 				"luci": [ "getLEDs", "getTimezones", "getUSBDevices", "getUnixtime" ],
++				"luci.mtwifi": [ "getWifiPerformanceState" ],
+ 				"rc": [ "list" ]
+ 			},
+ 			"uci": [ "luci", "system" ]
+@@ -11,6 +12,7 @@
+ 		"write": {
+ 			"ubus": {
+ 				"luci": [ "setLocaltime", "setPassword" ],
++				"luci.mtwifi": [ "setWifiPerformanceState" ],
+ 				"rc": [ "init" ]
+ 			},
+ 			"uci": [ "luci", "system" ]

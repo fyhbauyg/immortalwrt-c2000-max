@@ -3282,6 +3282,11 @@ function M.handle(action, data, context)
 		util.exec("(sleep 1; ubus call network reload >/dev/null 2>&1) &")
 		return rv
 	elseif action == "status" then
+		-- APP 3.2's dashboard checks code === 0 before parsing runtime.
+		-- A string "0" silently hides CPU, memory and signal cards. Keep
+		-- this endpoint's numeric success code for both DES and AES; do not
+		-- change the legacy response types used by unrelated endpoints.
+		rv.code = 0
 		rv.result = basic_status()
 		local runtime = M.app_runtime_status(rv.result,
 			context.source ~= "local" or bool_option("local_signal_enable"))

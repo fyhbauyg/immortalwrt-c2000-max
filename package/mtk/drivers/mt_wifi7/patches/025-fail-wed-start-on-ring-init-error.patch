@@ -1,0 +1,22 @@
+--- a/wlan_hwifi/bus/mtk_wed.c
++++ b/wlan_hwifi/bus/mtk_wed.c
+@@ -1184,11 +1184,18 @@
+ {
+ 	struct wed_trans *trans = to_wed_trans(hw);
+ 	struct mtk_hw_dev *dev = to_hw_dev(trans);
++	int ret;
+ 
+ 	if (trans->enable) {
+ 		if (trans->wed_ver == 1)
+ 			wed_v1_compatible_mode_config(to_bus_trans(hw), trans->wifi_hw);
+-		warp_ring_init(hw);
++		ret = warp_ring_init(hw);
++		if (ret) {
++			dev_err(to_device(to_bus_trans(hw)),
++				"%s(): WED ring initialization failed: %d\n",
++				__func__, ret);
++			return ret;
++		}
+ 
+ 		if (!test_bit(HWIFI_STATE_RESET, &dev->state))
+ 			warp_dma_handler(hw, WARP_DMA_TXRX);

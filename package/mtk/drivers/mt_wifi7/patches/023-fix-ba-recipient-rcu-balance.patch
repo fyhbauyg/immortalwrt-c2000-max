@@ -1,0 +1,15 @@
+--- a/mt_wifi/common/ba_action.c
++++ b/mt_wifi/common/ba_action.c
+@@ -2461,6 +2461,12 @@
+ 	pBAEntry = &ba_ctl->BARecEntry[Idx];
+ 	NdisAcquireSpinLock(&pBAEntry->RxReRingLock);
+ 
++	/* A concurrent teardown may already have released this BA entry. */
++	if (pBAEntry->REC_BA_Status == Recipient_NONE) {
++		NdisReleaseSpinLock(&pBAEntry->RxReRingLock);
++		return;
++	}
++
+ 	if (pBAEntry->REC_BA_Status != Recipient_NONE) {
+ 		pEntry = pBAEntry->pEntry;
+ 		if (!IS_VALID_ENTRY(pEntry)) {

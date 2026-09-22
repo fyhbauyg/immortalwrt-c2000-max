@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-app
 PKG_VERSION:=1.11.0
-PKG_RELEASE:=2
+PKG_RELEASE:=5
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_BUILD_PARALLEL:=1
 
@@ -73,6 +73,8 @@ define Package/c2000max-app/install
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/netstats.lua $(1)/usr/lib/lua/c2000max_app/netstats.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/runtime.lua $(1)/usr/lib/lua/c2000max_app/runtime.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/http.lua $(1)/usr/lib/lua/c2000max_app/http.lua
+	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/public_signal.lua $(1)/usr/lib/lua/c2000max_app/public_signal.lua
+	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/lan_boundary.lua $(1)/usr/lib/lua/c2000max_app/lan_boundary.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/protocol.lua $(1)/usr/lib/lua/c2000max_app/protocol.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/identity.lua $(1)/usr/lib/lua/c2000max_app/identity.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/cloud.lua $(1)/usr/lib/lua/c2000max_app/cloud.lua
