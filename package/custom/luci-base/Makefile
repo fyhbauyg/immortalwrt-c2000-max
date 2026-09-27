@@ -8,7 +8,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-base
 PKG_SRC_VERSION:=26.248.12024~e9cdc0a
-PKG_GITBRANCH:=LuCI c2000max-v37.01 branch
+PKG_GITBRANCH:=LuCI c2000max-v37.5-beta branch
 PKG_RELEASE:=3
 PKG_BUILD_FLAGS:=no-lto
 

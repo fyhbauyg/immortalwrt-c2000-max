@@ -79,7 +79,7 @@ index e891b4fa..743713fc 100644
 diff --git a/modules/luci-lua-runtime/Makefile b/modules/luci-lua-runtime/Makefile
 old mode 100644
 new mode 100755
-index c06190cb..41807a5f
+index c06190cb..ec3b212a
 --- a/modules/luci-lua-runtime/Makefile
 +++ b/modules/luci-lua-runtime/Makefile
 @@ -7,6 +7,9 @@
@@ -87,7 +87,7 @@ index c06190cb..41807a5f
  
  PKG_NAME:=luci-lua-runtime
 +PKG_SRC_VERSION:=26.248.12024~e9cdc0a
-+PKG_GITBRANCH:=LuCI c2000max-v37.01 branch
++PKG_GITBRANCH:=LuCI c2000max-v37.5-beta branch
 +PKG_RELEASE:=3
  
  LUCI_TYPE:=mod
@@ -122,77 +122,50 @@ index a6d5a7a4..e0191c4c 100644
  # call BuildPackage - OpenWrt buildroot signature
 -
 diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
-index 92e1dd49..4f95aa1d 100644
+old mode 100644
+new mode 100755
+index 92e1dd49..62ce7f91
 --- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
 +++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
-@@ -10,18 +10,41 @@ var callReboot = rpc.declare({
- 	expect: { result: 0 }
- });
+@@ -4,62 +4,96 @@
+ 'require ui';
+ 'require uci';
  
-+var callOfficialStatus = rpc.declare({
-+	object: 'c2000max',
-+	method: 'official_boot_status',
-+	expect: { '': {} }
-+});
-+
-+var callOfficialOnce = rpc.declare({
-+	object: 'c2000max',
-+	method: 'official_boot_once',
-+	expect: { '': {} }
-+});
-+
+-var callReboot = rpc.declare({
+-	object: 'system',
+-	method: 'reboot',
+-	expect: { result: 0 }
+-});
++var callReboot = rpc.declare({object:'system',method:'reboot',expect:{result:0}});
++var callPriority = rpc.declare({object:'c2000max',method:'boot_priority_status',expect:{'':{}}});
++var savePriority = rpc.declare({object:'c2000max',method:'boot_priority_set',params:['priority'],expect:{'':{}}});
+ 
  return view.extend({
- 	load: function() {
+-	load: function() {
 -		return uci.changes();
-+		return Promise.all([
-+			uci.changes(),
-+			callOfficialStatus().catch(function(e) {
-+				return { ready: false, armed: false, message: e.message };
-+			})
-+		]);
- 	},
- 
+-	},
+-
 -	render: function(changes) {
-+	render: function(data) {
-+		var changes = data[0] || {};
-+		var official = data[1] || {};
-+		var officialButtonAttrs = {
-+			'class': 'cbi-button cbi-button-negative important',
-+			'click': ui.createHandlerFn(this, 'handleOfficialOnce')
-+		};
- 		var body = E([
- 			E('h2', _('Reboot')),
- 			E('p', {}, _('Reboots the operating system of your device'))
- 		]);
- 
+-		var body = E([
+-			E('h2', _('Reboot')),
+-			E('p', {}, _('Reboots the operating system of your device'))
+-		]);
+-
 -		for (var config in (changes || {})) {
-+		for (var config in changes) {
- 			body.appendChild(E('p', { 'class': 'alert-message warning' },
- 				_('Warning: There are unsaved changes that will get lost on reboot!')));
- 			break;
-@@ -33,30 +56,72 @@ return view.extend({
- 			'click': ui.createHandlerFn(this, 'handleReboot')
- 		}, _('Perform reboot')));
- 
-+		if (!official.ready || official.armed)
-+			officialButtonAttrs.disabled = 'disabled';
-+
-+		body.appendChild(E('div', {
-+			'class': 'cbi-section',
-+			'style': 'margin-top:2em'
-+		}, [
-+			E('h3', {}, _('官方系统 Flash 保护')),
-+			E('p', {}, _('本版本将 SPI-NOR 分区设为只读，不向官方系统或启动环境写入标记，因此停用一次性切换。需要进入官方系统时，请先关机再拔出 TF 卡；需要回到 ImmortalWrt 时，关机后插回 TF 卡。')),
-+			E('p', {
-+				'class': official.ready ? 'alert-message notice' : 'alert-message warning'
-+			}, official.message || _('正在检查启动环境…')),
-+			E('button', officialButtonAttrs,
-+				official.armed ? _('已安排一次性启动') : _('重启到官方系统一次'))
-+		]));
-+
- 		return body;
- 	},
- 
+-			body.appendChild(E('p', { 'class': 'alert-message warning' },
+-				_('Warning: There are unsaved changes that will get lost on reboot!')));
+-			break;
+-		}
+-
+-		body.appendChild(E('hr'));
+-		body.appendChild(E('button', {
+-			'class': 'cbi-button cbi-button-action important',
+-			'click': ui.createHandlerFn(this, 'handleReboot')
+-		}, _('Perform reboot')));
+-
+-		return body;
+-	},
+-
 -	handleReboot: function(ev) {
 -		return callReboot().then(function(res) {
 -			if (res != 0) {
@@ -200,66 +173,113 @@ index 92e1dd49..4f95aa1d 100644
 -				L.raise('Error', 'Reboot failed');
 -			}
 -
-+	showRebootWait: function() {
-+		L.ui.showModal(_('Rebooting…'), [
-+			E('p', { 'class': 'spinning' }, _('Waiting for device...'))
-+		]);
-+		window.setTimeout(function() {
- 			L.ui.showModal(_('Rebooting…'), [
+-			L.ui.showModal(_('Rebooting…'), [
 -				E('p', { 'class': 'spinning' }, _('Waiting for device...'))
-+				E('p', { 'class': 'spinning alert-message warning' },
-+					_('Device unreachable! Still waiting for device...'))
- 			]);
-+		}, 150000);
-+		L.ui.awaitReconnect();
-+	},
- 
+-			]);
+-
 -			window.setTimeout(function() {
 -				L.ui.showModal(_('Rebooting…'), [
 -					E('p', { 'class': 'spinning alert-message warning' },
 -						_('Device unreachable! Still waiting for device...'))
 -				]);
 -			}, 150000);
-+	handleReboot: function() {
-+		return callReboot().then(L.bind(function(res) {
-+			if (res != 0)
-+				throw new Error(_('The reboot command failed with code %d').format(res));
-+			this.showRebootWait();
-+		}, this)).catch(function(e) {
-+			L.ui.addNotification(null, E('p', e.message));
-+		});
-+	},
- 
+-
 -			L.ui.awaitReconnect();
 -		})
 -		.catch(function(e) { L.ui.addNotification(null, E('p', e.message)) });
-+	handleOfficialOnce: function() {
-+		return ui.showModal(_('确认一次性启动官方系统'), [
-+			E('p', {}, _('路由器将从 SPI-NOR 启动官方系统一次。请确保当前没有正在进行的刷写、升级或关键业务。')),
-+			E('div', { 'class': 'right' }, [
-+				E('button', {
-+					'class': 'btn',
-+					'click': ui.hideModal
-+				}, _('取消')),
-+				' ',
-+				E('button', {
-+					'class': 'btn cbi-button-negative important',
-+					'click': ui.createHandlerFn(this, function() {
-+						return callOfficialOnce().then(L.bind(function(result) {
-+							if (!result || !result.ready || !result.armed)
-+								throw new Error((result && result.message) || _('无法安排官方系统启动。'));
-+							this.showRebootWait();
-+						}, this)).catch(function(e) {
-+							ui.hideModal();
-+							L.ui.addNotification(null, E('p', e.message));
-+						});
-+					})
-+				}, _('确认并重启'))
-+			])
-+		]);
- 	},
- 
- 	handleSaveApply: null,
+-	},
+-
+-	handleSaveApply: null,
+-	handleSave: null,
+-	handleReset: null
++ load:function(){
++  return Promise.all([uci.changes(),callPriority().catch(function(e){return {ready:false,message:e.message};})]);
++ },
++ render:function(data){
++  var state=data[1]||{},self=this;
++  this.prioritySelect=E('select',{'id':'boot-priority'},[
++   E('option',{'value':'sd'},_('SD / TF 卡优先')),
++   E('option',{'value':'flash'},_('Flash 官方系统优先'))
++  ]);
++  if(state.priority!=='sd'&&state.priority!=='flash')
++   this.prioritySelect.insertBefore(E('option',{'value':''},_('未读取')),this.prioritySelect.firstChild);
++  this.prioritySelect.value=state.priority||'';
++  this.priorityMessage=E('p',{'class':state.ready?'alert-message notice':'alert-message warning'},state.message||_('无法读取启动优先级。'));
++  this.priorityButton=E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,'handlePrioritySave')},_('保存启动优先级'));
++  // LuCI E() stringifies false attributes; use DOM properties for booleans.
++  this.prioritySelect.disabled=!state.ready;
++  this.priorityButton.disabled=!state.ready;
++  this.savedPriority=state.priority;
++  this.priorityPending=false;this.priorityUncertain=false;
++  this.prioritySelect.addEventListener('change',function(){self.updateReturnHint();});
++  this.returnHint=E('p',{'class':'cbi-value-description'});
++  this.updateReturnHint();
++  var body=E([
++   E('h2',_('Reboot')),
++   E('p',{},_('Reboots the operating system of your device'))
++  ]);
++  for(var config in (data[0]||{})){
++   body.appendChild(E('p',{'class':'alert-message warning'},_('Warning: There are unsaved changes that will get lost on reboot!')));break;
++  }
++  body.appendChild(E('button',{'class':'cbi-button cbi-button-action important','click':ui.createHandlerFn(this,'handleReboot')},_('Perform reboot')));
++  body.appendChild(E('section',{'class':'cbi-section'},[
++   E('h3',{},_('启动优先级')),
++   E('p',{},_('选择重启时优先尝试的系统。设置会持续生效，保存不会立即重启。')),
++   E('div',{'class':'cbi-value'},[
++    E('label',{'class':'cbi-value-title','for':'boot-priority'},_('优先启动')),
++    E('div',{'class':'cbi-value-field'},[this.prioritySelect,this.returnHint])
++   ]),
++   this.priorityMessage,this.priorityButton
++  ]));
++  return body;
++ },
++ updateReturnHint:function(){
++  if(!this.returnHint)return;
++  this.returnHint.textContent=this.prioritySelect.value==='flash'
++   ?_('选择 Flash 后，后续重启仍优先进入官方系统。需要返回 TF 系统时，请在官方系统的启动设置中改回 SD 优先。')
++   :_('优先启动已插入的 SD / TF 卡系统。');
++ },
++ handlePrioritySave:function(){
++  var wanted=this.prioritySelect.value;
++  if(wanted!=='sd'&&wanted!=='flash')return;
++  this.prioritySelect.disabled=true;
++  this.priorityPending=true;
++  this.priorityButton.disabled=true;
++  this.priorityMessage.textContent=_('正在保存并校验启动优先级…');
++  return savePriority(wanted).then(L.bind(function(result){
++   if(!result||!result.success||!result.ready||result.priority!==wanted)
++    throw new Error(result&&result.message||_('启动优先级保存失败，请勿重启。'));
++   this.savedPriority=result.priority;
++   this.priorityUncertain=false;
++   this.priorityMessage.className='alert-message notice';
++   this.priorityMessage.textContent=result.message;
++  },this)).catch(L.bind(function(e){
++   this.priorityUncertain=true;
++   this.priorityMessage.className='alert-message warning';
++   this.priorityMessage.textContent=e.message;
++  },this)).finally(L.bind(function(){
++   this.priorityPending=false;
++   this.prioritySelect.disabled=false;this.priorityButton.disabled=false;
++  },this));
++ },
++ showRebootWait:function(){
++  ui.showModal(_('Rebooting…'),[E('p',{'class':'spinning'},_('Waiting for device...'))]);
++  L.ui.awaitReconnect();
++ },
++ handleReboot:function(){
++  if(this.priorityPending||this.priorityUncertain){
++   ui.addNotification(null,E('p',{},_('启动设置尚未完成或校验失败，请先检查，暂不重启。')));return;
++  }
++  if(this.savedPriority&&this.prioritySelect.value!==this.savedPriority){
++   ui.addNotification(null,E('p',{},_('启动优先级尚未保存，请先保存或恢复原选项。')));return;
++  }
++  return callReboot().then(L.bind(function(result){
++   if(result!==0)throw new Error(_('The reboot command failed with code %d').format(result));
++   this.showRebootWait();
++  },this)).catch(function(e){ui.addNotification(null,E('p',{},e.message));});
++ },
++ handleSaveApply:null,handleSave:null,handleReset:null
+ });
 diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js
 index 2b9b8f5f..33dfcf2a 100644
 --- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/system.js
