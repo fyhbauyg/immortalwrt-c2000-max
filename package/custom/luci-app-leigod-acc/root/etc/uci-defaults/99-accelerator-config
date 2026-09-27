@@ -17,7 +17,7 @@ uci set accelerator.base.url='https://opapi.nn.com/speed/router/plug/check'
 uci set accelerator.base.heart='https://opapi.nn.com/speed/router/heartbeat'
 uci set accelerator.base.base_url='https://opapi.nn.com/speed'
 uci -q get accelerator.base.enabled >/dev/null || uci set accelerator.base.enabled='0'
-uci set accelerator.base.tun='1'
+uci -q delete accelerator.base.tun
 uci -q delete accelerator.base.schedule_enabled
 uci -q delete accelerator.base.pause_time
 uci -q delete accelerator.base.username
@@ -32,4 +32,28 @@ uci -q batch <<-EOF >/dev/null
 EOF
 
 rm -f /tmp/luci-indexcache
+# Import previous per-device categories once, without overwriting current engine data.
+/usr/bin/lua - <<'LUA'
+local uci = require("luci.model.uci").cursor()
+local ini = require "luci.model.leigod_ini"
+for key, value in pairs(uci:get_all("accelerator", "device") or {}) do
+ if #key == 12 and key:match("^%x+$") and tostring(value):match("^%d+$") and not ini.get(key) then
+  ini.set(key, value == "9" and "10" or value)
+ end
+end
+LUA
+# Only vendor TUN devices receive LAN forwarding permission.
+uci set firewall.leigod=zone
+uci set firewall.leigod.name=leigod
+uci set firewall.leigod.input=REJECT
+uci set firewall.leigod.output=ACCEPT
+uci set firewall.leigod.forward=REJECT
+for dev in tun_Phone tun_PC tun_Game tun_Unknown tun_Handheld; do
+ uci -q del_list firewall.leigod.device="$dev"
+ uci add_list firewall.leigod.device="$dev"
+done
+uci set firewall.lan_leigod=forwarding
+uci set firewall.lan_leigod.src=lan
+uci set firewall.lan_leigod.dest=leigod
+uci commit firewall
 exit 0

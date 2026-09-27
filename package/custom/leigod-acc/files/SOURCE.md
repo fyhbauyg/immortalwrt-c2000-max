@@ -1,0 +1,1 @@
+Vendor OpenWrt engine 1.2.2.52, retrieved 2026-09-27 from http://119.3.40.126/router_plugin_new/acc-bundle-arm64.tar.gz via the vendor installer referenced by openwrt-leigodacc-manager. Bundled locally; automatic engine/firmware updater is not installed. Package version uses the integration date because vendor changed version numbering.

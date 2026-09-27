@@ -4,20 +4,28 @@ START=50
 STOP=15
 USE_PROCD=1
 
-BIN="/usr/sbin/leigod/acc-gw.linux.arm64"
+BIN="/usr/sbin/leigod/acc-gw.router.arm64"
 
 start_service() {
-	local enabled
+	local enabled mode
 	config_load accelerator
 	config_get_bool enabled base enabled 0
-	[ "$enabled" -eq 1 ] || return 0
+	[ "$enabled" -eq 1 ] || { stop_service; return 0; }
 	[ -x "$BIN" ] || {
 		logger -t leigod "missing accelerator binary: $BIN"
 		return 1
 	}
 
+	mode="$(sed -n 's/^mode=//p' /etc/config/acc_firewall.ini | head -1)"
+	case "$mode" in tun|tproxy) ;; *) logger -t leigod "invalid acceleration mode"; return 1 ;; esac
+	# Suspend fast paths while the accelerator must inspect forwarded traffic.
+	touch /var/run/c2000max-leigod-active
+	[ ! -x /etc/init.d/c2000max-hnat ] || /etc/init.d/c2000max-hnat reload
 	procd_open_instance
-	procd_set_param command "$BIN" --mode tun
+	procd_set_param command "$BIN" -r daemon -m "$mode" -p 5588
+	[ "$mode" != tproxy ] || procd_append_param command -l 0.0.0.0
+	procd_set_param file /etc/config/accelerator.ini /etc/config/acc_firewall.ini
+	procd_set_param env ACC_FIREWALL_INI=/etc/config/acc_firewall.ini
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1
@@ -25,6 +33,58 @@ start_service() {
 	procd_close_instance
 }
 
+# LuCI Apply calls reload; procd's default reload skips stop_service.
+reload_service() {
+ stop
+ start
+}
+
 service_triggers() {
 	procd_add_reload_trigger accelerator
+}
+
+# The vendor daemon forks workers outside procd's tracked PID.
+stop_service() {
+ local proc pid
+ for proc in /proc/[0-9]*; do
+  case "$(readlink "$proc/exe" 2>/dev/null)" in
+  "$BIN"|"$BIN (deleted)") ;;
+  *) continue ;;
+  esac
+  pid="${proc##*/}"
+  kill -TERM "$pid" 2>/dev/null
+ done
+ # Remove only chains/tables owned by this engine, never the system ruleset.
+ # These exact mark/table pairs are created by the old and new vendor engines.
+ local table tries dev mark
+ for table in 99 100; do
+  tries=0
+  while [ "$tries" -lt 32 ] && ip rule del fwmark 0x99 lookup "$table" 2>/dev/null; do
+   tries=$((tries + 1))
+  done
+  ip route del local default dev lo table "$table" 2>/dev/null || true
+ done
+ # TUN marker files outlive workers; leaving them skips route setup on restart.
+ for dev in Phone PC Game Unknown Handheld; do
+  ip link delete "tun_$dev" 2>/dev/null || true
+  rm -f "/tmp/acc/tun_$dev"
+ done
+ for table in 101 102 103 104 105; do
+  mark="$(printf '0x%x' $((table + 156)))"
+  tries=0
+  while [ "$tries" -lt 32 ] && ip rule del fwmark "$mark" lookup "$table" 2>/dev/null; do
+   tries=$((tries + 1))
+  done
+ done
+ nft delete table inet tproxy_table 2>/dev/null || true
+ local tbl built
+ for tbl in mangle filter nat; do
+  case "$tbl" in filter) built=INPUT ;; *) built=PREROUTING ;; esac
+  iptables -t "$tbl" -D "$built" -j GAMEACC 2>/dev/null || true
+  iptables -t "$tbl" -F GAMEACC 2>/dev/null || true
+  iptables -t "$tbl" -X GAMEACC 2>/dev/null || true
+ done
+ rm -f /var/run/c2000max-leigod-active
+ [ ! -x /etc/init.d/c2000max-hnat ] || /etc/init.d/c2000max-hnat reload
+
 }

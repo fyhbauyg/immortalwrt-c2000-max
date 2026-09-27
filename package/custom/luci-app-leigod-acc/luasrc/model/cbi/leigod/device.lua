@@ -1,3 +1,4 @@
+local ini = require "luci.model.leigod_ini"
 local uci     = require "luci.model.uci".cursor()
 local util    = require "luci.util"
 local fs      = require "nixio.fs"
@@ -7,18 +8,7 @@ local io      = io
 -- config
 m             = Map("accelerator")
 m.title       = "雷神加速器设备管理"
-m.description = "选择雷神用于发现设备的局域网接口，并为每台客户端指定设备类型。"
-
--- get neigh info
-neigh         = m:section(NamedSection, "base", "system", "局域网接口")
-neigh_tab     = neigh:option(ListValue, "neigh", "加速设备所在接口")
-local sys_dir = util.exec("ls /sys/class/net")
-if sys_dir ~= nil then
-  neigh_tab:value("br-lan")
-  for ifc in string.gmatch(sys_dir, "[^\n]+") do
-    neigh_tab:value(ifc)
-  end
-end
+m.description = "新版引擎自动发现局域网设备，可在此调整客户端类型。加速与绑定请在雷神 APP 中操作。"
 
 -- range all device
 device = m:section(NamedSection, "device", "hardware", "设备信息")
@@ -109,7 +99,7 @@ end
 
 -- get device config
 for key, item in pairs(arp_map) do
-  local typ = uci:get("accelerator", "device", key)
+  local typ = ini.get(key)
   -- get device catalog from type
   local catalog = "none_catalog"
   -- default to unknown device 
@@ -134,6 +124,11 @@ for key, item in pairs(arp_map) do
   end
   -- device type
   device_typ = device:taboption(catalog, ListValue, key, item.name)
+  local device_key = key
+  device_typ.cfgvalue = function() return ini.get(device_key) or "10" end
+  device_typ.write = function(self, section, value)
+    if not ini.set(device_key, value) then error("无法保存设备类型") end
+  end
   device_typ:value("0", "不加速")
   device_typ:value("1", "Xbox")
   device_typ:value("2", "Nintendo Switch")
@@ -146,11 +141,11 @@ for key, item in pairs(arp_map) do
   device_typ:value("20", "Meta Quest / Oculus")
   device_typ:value("21", "HTC Vive")
   device_typ:value("22", "PICO")
-  device_typ:value("9", "未知设备")
+  device_typ:value("10", "未知设备")
 end
 
 -- set
-device.write = function()
+m.on_after_commit = function()
   util.exec("/etc/init.d/acc restart")
 end
 

@@ -10,7 +10,13 @@ LUCI_TITLE:=雷神加速器 LuCI 管理界面
 LUCI_PKGARCH:=all
 LUCI_DEPENDS:=+leigod-acc +jq +luci-compat +luci-lua-runtime
 PKG_VERSION:=1.0
-PKG_RELEASE:=10
+PKG_RELEASE:=13
+
+define Package/$(PKG_NAME)/conffiles
+/etc/config/accelerator
+/etc/config/accelerator.ini
+/etc/config/acc_firewall.ini
+endef
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

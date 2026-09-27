@@ -25,17 +25,18 @@ function get_acc_status()
   if exist ~= "" then
     resp.service = "加速服务已启动"
   end
+  local fs = require "nixio.fs"
+  local json = require "luci.jsonc"
+  local core = json.parse(fs.readfile("/tmp/acc/acc_core_conf.json") or "")
+  local states = {}
+  for _, item in ipairs(core and core.acceleration or {}) do
+    for kind, cfg in pairs(item) do states[kind] = tostring(cfg.state) end
+  end
   for _, typ in pairs({ "Phone", "PC", "Game", "Unknown" }) do
-    local state = uci:get("accelerator", typ, "state")
-    -- check state
-    local state_text = "未加速"
-    if state == nil or state == '0' then
-    elseif state == '1' then
-      state_text = "已开始加速"
-    elseif state == '2' then
-      state_text = "已停止加速"
-    elseif state == '3' then
-      state_text = "加速已暂停"
+    local state_text = "状态未获取"
+    if core then
+      local labels = { ["0"]="未加速", ["1"]="已开始加速", ["2"]="已停止加速", ["3"]="加速已暂停" }
+      state_text = labels[states[typ] or "0"] or "请在雷神 APP 查看"
     end
     -- store text
     local catalog_name = {
