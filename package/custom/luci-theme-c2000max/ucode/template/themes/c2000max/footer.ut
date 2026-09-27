@@ -1,0 +1,13 @@
+{% if (!blank_page): %}
+			</main>
+		</div>
+		<footer class="c2k-footer">
+			<span>{{ version.luciname }} {{ version.luciversion }} · {{ version.distname }} {{ version.distversion }}</span>
+			<span>C2000MAX</span>
+		</footer>
+		<script>L.require('menu-bootstrap')</script>
+		<script src="{{ media }}/nav.js?v=1.2.0" defer></script>
+		{% if (ctx.authsession): %}<script src="{{ media }}/overview.js?v=1.2.0" defer></script>{% endif %}
+{% endif %}
+	</body>
+</html>

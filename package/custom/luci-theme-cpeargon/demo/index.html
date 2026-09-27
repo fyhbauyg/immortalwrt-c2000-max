@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C2000MAX · OpenWrt CPE 控制台</title>
+<script src="../htdocs/luci-static/cpeargon/js/theme.js"></script>
+<link rel="stylesheet" href="../htdocs/luci-static/cpeargon/css/cascade.css">
+<link rel="stylesheet" id="cpe-argon-dark" href="../htdocs/luci-static/cpeargon/css/dark.css" media="not all">
+<script>window.CpeTheme.syncStylesheet()</script>
+<link rel="stylesheet" href="../htdocs/luci-static/cpeargon/css/daisyui.css">
+<link rel="stylesheet" href="../htdocs/luci-static/cpeargon/css/cpe.css">
+<link rel="stylesheet" href="../htdocs/luci-static/cpeargon/css/cpe-dashboard.css">
+</head>
+<body class="cpe-theme logged-in" data-page="admin-status-cpe">
+  <div class="main">
+    <aside class="main-left" id="mainmenu" aria-label="主导航">
+      <div class="sidenav-header"><a class="brand cpe-brand" href="#home"><span class="cpe-brand-mark">C</span><span><strong>C2000MAX</strong><small>5G CPE · OpenWrt</small></span></a></div>
+      <div class="cpe-sidebar-caption">ROUTING ENGINE</div>
+      <ul class="nav">
+        <li><a class="food active" href="#home">CPE 首页</a></li>
+        <li><a class="food" href="#overview">原版概览</a></li>
+      </ul>
+    </aside>
+    <div class="main-right">
+      <header class="bg-primary"><div class="fill"><div class="container"><a class="brand cpe-header-brand" href="#home">C2000MAX</a></div></div></header>
+      <div class="darkMask"></div>
+      <div id="maincontent">
+        <div class="container">
+          <div id="view">
+            <div id="cpe-root"></div>
+          </div>
+        </div>
+      </div>
+      <footer class="cpe-footer"><span>C2000MAX CPE</span></footer>
+    </div>
+  </div>
+  <script src="../htdocs/luci-static/cpeargon/js/cpe-dashboard.js"></script>
+  <script>
+    if (typeof window.mountCpeDashboard === 'function') {
+      window.mountCpeDashboard(document.getElementById('cpe-root'));
+    }
+  </script>
+</body>
+</html>

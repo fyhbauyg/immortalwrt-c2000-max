@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="c2000max-light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LuCI dynamic menu fixture</title>
+<link rel="stylesheet" href="../htdocs/luci-static/c2000max/daisyui.css"><link rel="stylesheet" href="../htdocs/luci-static/c2000max/c2000max.css"></head>
+<body class="c2k-app">
+<header class="c2k-header"><button id="c2k-menu-toggle" class="c2k-menu-toggle" aria-expanded="false" aria-controls="c2k-sidebar" type="button">☰</button><a class="c2k-brand" href="#">C2000MAX</a><div class="c2k-header-search"><input id="c2k-menu-search" type="search" aria-label="Search menu" placeholder="Search menu"></div></header>
+<div class="c2k-shell"><div id="c2k-drawer-backdrop" class="c2k-drawer-backdrop" hidden></div><aside id="c2k-sidebar" class="c2k-sidebar"><div class="c2k-sidebar-heading">Dynamic LuCI menu</div><ul id="modemenu"></ul><ul id="topmenu" class="c2k-nav menu" style="display:none"></ul></aside><main id="maincontent" class="c2k-main container"><h1>Dynamic menu test</h1><p>Plugin categories and entries are inserted after the theme script starts.</p><div id="tabmenu"></div></main></div>
+<script src="../htdocs/luci-static/c2000max/nav.js" defer></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () { window.setTimeout(function () {
+  var menu = document.getElementById('topmenu');
+  menu.innerHTML = '<li class="dropdown"><a href="#">Status</a><ul class="dropdown-menu"><li><a href="/cgi-bin/luci/admin/status/overview">Overview</a></li></ul></li>' +
+    '<li class="dropdown"><a href="#">Network</a><ul class="dropdown-menu"><li><a href="/cgi-bin/luci/admin/network/wireless">Wireless</a></li></ul></li>' +
+    '<li class="dropdown"><a href="#">Services</a><ul class="dropdown-menu"><li><a href="/cgi-bin/luci/admin/services/qmodem">QModem</a></li><li><a href="/cgi-bin/luci/admin/services/openclash">OpenClash</a></li></ul></li>' +
+    '<li class="dropdown"><a href="#">My Plugins</a><ul class="dropdown-menu"><li><a href="/cgi-bin/luci/admin/myplugins/packet-capture">Packet Capture</a></li></ul></li>';
+  menu.style.display = '';
+  window.menuFixtureReady = true;
+}, 0); });
+</script>
+</body></html>

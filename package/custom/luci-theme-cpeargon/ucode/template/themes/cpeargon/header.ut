@@ -1,0 +1,59 @@
+{# Based on luci-theme-argon by Jerrykuku, Apache-2.0. #}
+{%
+	import { getuid, getspnam } from 'luci.core';
+	const boardinfo = ubus.call('system', 'board');
+	const hostname = striptags(boardinfo?.hostname ?? 'C2000MAX');
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="robots" content="noindex, nofollow">
+	<meta name="theme-color" content="#0b1326">
+	<title>{{ hostname }}{{ node?.title ? ` - ${striptags(node.title)}` : '' }} - LuCI</title>
+	<link rel="icon" href="{{ media }}/img/argon.svg" type="image/svg+xml">
+	<script src="{{ media }}/js/theme.js?v=2.0.4"></script>
+	<link rel="stylesheet" href="{{ media }}/css/cascade.css?v=2.0.4">
+	<link rel="stylesheet" id="cpe-argon-dark" href="{{ media }}/css/dark.css?v=2.0.4" media="not all">
+	<script>window.CpeTheme.syncStylesheet();</script>
+	<link rel="stylesheet" href="{{ media }}/css/daisyui.css?v=2.0.4">
+	<link rel="stylesheet" href="{{ media }}/css/cpe.css?v=2.0.4">
+	{% if (node?.css): %}<link rel="stylesheet" href="{{ resource }}/{{ node.css }}">{% endif -%}
+	{% if (css): %}<style>{{ css }}</style>{% endif -%}
+	<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}?v={{ version.luciversion }}"></script>
+	<script src="{{ resource }}/cbi.js?v={{ version.luciversion }}"></script>
+	<script src="{{ resource }}/luci.js?v={{ version.luciversion }}"></script>
+</head>
+<body class="lang_{{ dispatcher.lang }} logged-in cpe-theme" data-page="{{ entityencode(join('-', ctx.request_path), true) }}">
+	<div class="main">
+		<aside class="main-left" id="mainmenu" style="display:none" aria-label="主导航">
+			<div class="sidenav-header">
+				<a class="brand cpe-brand" href="{{ dispatcher.build_url('admin/status/cpe') }}"><span class="cpe-brand-mark">C</span><span><strong>C2000MAX</strong><small>5G CPE · OpenWrt</small></span></a>
+			</div>
+			<div class="cpe-sidebar-caption">ROUTING ENGINE</div>
+		</aside>
+		<div class="main-right">
+			<header class="bg-primary">
+				<div class="fill"><div class="container">
+					<div class="flex1">
+						<a class="showSide" role="button" aria-label="打开菜单" tabindex="0"><svg class="cpe-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="{{ media }}/icon/lucide.svg#menu"></use></svg></a>
+						<a class="brand cpe-header-brand" href="{{ dispatcher.build_url('admin/status/cpe') }}">C2000MAX <span>CPE</span></a>
+					</div>
+					<div class="cpe-header-meta"><span class="cpe-online-dot"></span><span>OpenWrt CPE</span></div>
+					<div class="cpe-theme-controls" role="group" aria-label="颜色模式">
+						<label title="跟随系统"><input type="radio" name="cpe-theme" value="auto" aria-label="跟随系统"><span><svg class="cpe-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="{{ media }}/icon/lucide.svg#monitor"></use></svg></span></label>
+						<label title="浅色"><input class="theme-controller" type="radio" name="cpe-theme" value="light" aria-label="浅色"><span><svg class="cpe-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="{{ media }}/icon/lucide.svg#sun"></use></svg></span></label>
+						<label title="深色"><input class="theme-controller" type="radio" name="cpe-theme" value="dark" aria-label="深色"><span><svg class="cpe-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="{{ media }}/icon/lucide.svg#moon"></use></svg></span></label>
+					</div>
+					<div class="status" id="indicators"></div>
+				</div></div>
+			</header>
+			<div class="darkMask"></div>
+			<div id="maincontent"><div class="container">
+				{% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}
+				<div class="alert-message error"><h4>{{ _('No password set!') }}</h4><p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p></div>
+				{% endif %}
+				<noscript><div class="alert-message error"><h4>{{ _('JavaScript required!') }}</h4></div></noscript>
+				<div id="tabmenu" style="display:none"></div>

@@ -1,0 +1,87 @@
+{# LuCI authentication form matching openwrt-cpe-theme frosted-glass window #}
+{% include('themes/' + theme + '/out_header_login') %}
+{%
+	const boardinfo = ubus.call('system', 'board');
+	const hostname = striptags(boardinfo?.hostname ?? 'C2000MAX');
+	const model = striptags(boardinfo?.model ?? '5G CPE');
+%}
+<div class="cpe-login-bg" aria-hidden="true"></div>
+<div class="cpe-login-overlay" aria-hidden="true"></div>
+
+<div class="cpe-login-top-controls">
+	<button type="button" id="cpe-theme-toggle" class="cpe-glass-btn circle" title="切换模式">
+		<svg id="cpe-theme-icon" class="cpe-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></svg>
+	</button>
+</div>
+
+<div class="cpe-login-card-container">
+	<div class="cpe-login-icon">
+		<svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<rect x="2" y="13" width="20" height="8" rx="2"></rect>
+			<path d="M6 9a6 6 0 0 1 12 0M9 12a3 3 0 0 1 6 0M6 17h.01M10 17h.01M14 17h.01"></path>
+		</svg>
+	</div>
+
+	<h1 class="cpe-login-title">{{ hostname }}</h1>
+	<p class="cpe-login-subtitle">{{ _('Administrator Authentication') }}</p>
+
+	{% if (fuser): %}
+	<div class="cpe-alert-error" role="alert">{{ _('Invalid username and/or password! Please try again.') }}</div>
+	{% endif %}
+
+	<form class="cpe-login-form" method="post" action="{{ http.getenv('REQUEST_URI') }}">
+		<div class="cpe-form-group">
+			<label class="cpe-form-label" for="cbi-input-user">{{ _('Username') }}</label>
+			<div class="cpe-input-wrapper">
+				<input class="cpe-input" id="cbi-input-user" name="luci_username" type="text" value="{{ entityencode(duser, true) }}" autocomplete="username" required>
+			</div>
+		</div>
+
+		<div class="cpe-form-group">
+			<label class="cpe-form-label" for="cbi-input-password">{{ _('Password') }}</label>
+			<div class="cpe-input-wrapper">
+				<input class="cpe-input" id="cbi-input-password" name="luci_password" type="password" autocomplete="current-password">
+				<button type="button" class="cpe-pw-toggle" aria-label="显示/隐藏密码" onclick="var p=document.getElementById('cbi-input-password');p.type=p.type==='password'?'text':'password';">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+						<circle cx="12" cy="12" r="3"></circle>
+					</svg>
+				</button>
+			</div>
+		</div>
+
+		<button type="submit" class="cpe-login-btn">
+			<span>{{ _('Sign In') }}</span>
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+				<path d="M5 12h14M12 5l7 7-7 7"></path>
+			</svg>
+		</button>
+	</form>
+
+	<div class="cpe-login-footer-info">
+		{{ version.distname || 'OpenWrt' }} {{ version.distversion }} · {{ model }}
+	</div>
+</div>
+
+<script>
+	var themeBtn = document.getElementById('cpe-theme-toggle');
+	var themeIcon = document.getElementById('cpe-theme-icon');
+	function updateThemeIcon() {
+		var isDark = document.documentElement.dataset.theme === 'cpe-dark';
+		if (themeIcon) {
+			themeIcon.innerHTML = isDark
+				? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>'
+				: '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+		}
+	}
+	if (themeBtn) {
+		themeBtn.onclick = function() {
+			var next = document.documentElement.dataset.theme === 'cpe-dark' ? 'light' : 'dark';
+			window.CpeTheme.apply(next, true);
+			updateThemeIcon();
+		};
+	}
+	updateThemeIcon();
+	document.getElementById('cbi-input-password')?.focus();
+</script>
+{% include('themes/' + theme + '/footer_login') %}

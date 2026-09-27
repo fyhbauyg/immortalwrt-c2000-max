@@ -1,0 +1,90 @@
+// Cache-only integration: never opens an AT port or runs a modem command.
+'use strict';
+import { readfile, stat, popen } from 'fs';
+import { connect } from 'ubus';
+return {
+ 'c2000max.ui': {
+  clients: {
+   call: function() {
+    let bus=connect(), macs={}, available=false;
+    if (!bus) return { available:false };
+    let lan=bus.call('network.interface.lan','status');
+    let dev=lan?.l3_device;
+    if (type(dev)=='string' && match(dev,/^[A-Za-z0-9_.:-]+$/)) {
+     let pipe=popen('/sbin/ip neigh show 2>/dev/null','r');
+     if(pipe) {
+      let output=pipe.read('all'); let status=pipe.close();
+      available=(status==0);
+      for(let line in split(output||'', '\n')) {
+       let row=match(line,/ dev ([^ ]+) lladdr ([0-9a-fA-F:]{17}) REACHABLE( |$)/);
+       if(row && row[1]==dev) macs[lc(row[2])]=true;
+      }
+     }
+    }
+    let radios=bus.call('network.wireless','status');
+    if(type(radios)=='object') for(let name, radio in radios) {
+     if(!radio.up) continue;
+     for(let iface in radio.interfaces||[]) {
+      if(type(iface.ifname)!='string') continue;
+      let stations=bus.call('hostapd.'+iface.ifname,'get_clients');
+      if(type(stations?.clients)!='object') continue;
+      available=true;
+      for(let mac, client in stations.clients)
+       if(client.assoc && client.authorized && match(mac,/^[0-9a-fA-F:]{17}$/)) macs[lc(mac)]=true;
+     }
+    }
+    bus.disconnect();
+    return { available, count:available?length(keys(macs)):null, source:'associated-or-reachable' };
+   }
+  },
+  sensors: {
+   call: function() {
+    let wifi_temps = [];
+    for (let iface in ['ra0', 'rai0']) {
+     if (!stat('/sys/class/net/' + iface) || !stat('/usr/sbin/mwctl')) continue;
+     let pipe = popen('/usr/sbin/mwctl dev ' + iface + ' stat 2>/dev/null', 'r');
+     if (!pipe) continue;
+     let output = pipe.read('all'); pipe.close();
+     let found = match(output || '', /CurrentTemperature\s*=\s*(-?[0-9]+)/);
+     if (found && int(found[1]) > -40 && int(found[1]) < 150)
+      push(wifi_temps, { phy: iface, milli_c: int(found[1]) * 1000 });
+    }
+    let wireless = null, bus = connect();
+    if (bus) {
+     let radios = bus.call('network.wireless', 'status');
+     if (type(radios) == 'object') {
+      wireless = {};
+      for (let name, radio in radios) {
+       let interfaces = [];
+       for (let iface in radio.interfaces || [])
+        push(interfaces, { config: { ssid: iface.config?.ssid, disabled: iface.config?.disabled } });
+       wireless[name] = { up: radio.up, disabled: radio.disabled, interfaces };
+      }
+     }
+     bus.disconnect();
+    }
+    return { wifi_temps, wireless };
+   }
+  },
+  modem: {
+   args: { section: '' },
+   call: function(req) {
+    let section = req.args.section;
+    if (type(section) != 'string' || !match(section, /^[A-Za-z0-9_]{1,64}$/))
+     return { sources: [], error: 'invalid_section' };
+    let sources = [];
+    for (let kind in ['base', 'cell', 'sim', 'network']) {
+     let path = '/tmp/cache_' + kind + '_info_' + section;
+     let st = stat(path);
+     if (!st || st.size > 262144) continue;
+     try {
+      let data = json(readfile(path));
+      if (type(data.modem_info) == 'array')
+       push(sources, { kind, age: max(0, time() - st.mtime), entries: data.modem_info });
+     } catch (e) {}
+    }
+    return { section, sources, cache_only: true };
+   }
+  }
+ }
+};

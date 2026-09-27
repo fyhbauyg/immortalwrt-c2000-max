@@ -245,7 +245,7 @@
 
 /* Draggable Section Styles */
 .cbi-section.draggable {
-	cursor: move;
+	cursor: auto;
 	transition: box-shadow 0.2s ease;
 }
 
@@ -285,4 +285,16 @@
 	font-size: 0.9em;
 	color: var(--text-color-secondary, #666666);
 	text-align: center;
+}
+
+/* Touch scrolling takes precedence over section sorting. */
+@media (hover: hover) and (pointer: fine) {
+	.cbi-section.draggable > legend,
+	.cbi-section.draggable > .panel-title { cursor: grab; }
+}
+@media (hover: none), (pointer: coarse) {
+	.cbi-section.draggable > legend::before,
+	.cbi-section.draggable > .panel-title::before { content: none; }
+	.cbi-section.draggable > legend,
+	.cbi-section.draggable > .panel-title { padding-left: 0; }
 }

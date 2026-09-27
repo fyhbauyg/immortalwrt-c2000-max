@@ -1,0 +1,54 @@
+{# CPE37 template based on LuCI Bootstrap, Apache-2.0. #}
+{%
+ import { getuid, getspnam } from 'luci.core';
+ const boardinfo = ubus.call('system', 'board') ?? {};
+ http.prepare_content('text/html; charset=UTF-8');
+-%}
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+ <meta name="color-scheme" content="light dark">
+ <meta name="darkreader-lock">
+ <title>{{ striptags(`${boardinfo.hostname ?? 'C2000MAX'}${node?.title ? ` | ${_(node.title)}` : ''}`) }}</title>
+ <script src="{{ media }}/theme.js?v=1"></script>
+ <link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+ <link rel="stylesheet" href="/luci-static/bootstrap/mobile.css" media="only screen and (max-device-width: 854px)">
+ <link rel="stylesheet" href="{{ media }}/style.css?v=1">
+ <link rel="stylesheet" href="{{ media }}/cpe-dashboard.css?v=1">
+ <link rel="stylesheet" href="{{ media }}/dashboard.css?v=1">
+ {% if (node?.css): %}<link rel="stylesheet" href="{{ resource }}/{{ node.css }}">{% endif %}
+ {% if (css): %}<style>{{ css }}</style>{% endif %}
+ <script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
+ <script src="{{ resource }}/cbi.js"></script>
+ <script type="module" src="{{ media }}/cpe-dashboard.js?v=1"></script>
+</head>
+<body class="lang_{{ dispatcher.lang }} {{ blank_page ? 'cpe37-blank' : 'cpe37-app' }} {{ !ctx.authsession && !blank_page ? 'cpe37-login' : '' }}" data-page="{{ entityencode(join('-', ctx.request_path), true) }}">
+{% if (!blank_page): %}
+ <a class="cpe37-skip" href="#maincontent">{{ _('Skip to content') }}</a>
+ <header class="cpe37-header">
+  <button type="button" id="cpe37-menu-button" class="cpe37-icon-button" aria-label="打开全部菜单" aria-controls="cpe37-sidebar" aria-expanded="false">☰</button>
+  <a class="cpe37-brand" href="{{ dispatcher.build_url('admin/status/overview') }}"><span class="cpe37-brand-mark">⌁</span><strong>C2000MAX</strong><small>V37.01</small></a>
+  <div class="cpe37-status-pill"><span class="cpe37-status-dot"></span><span>5G SA</span> · <span>n78</span></div>
+  <nav class="cpe37-shortcuts" aria-label="快捷导航">
+   <a href="{{ dispatcher.build_url('admin/status/overview') }}">总览</a>
+   <a href="{{ dispatcher.build_url('admin/modem/qmodem') }}">5G模组</a>
+   <a href="{{ dispatcher.build_url('admin/network/wireless') }}">无线</a>
+  </nav>
+  <div class="cpe37-header-actions"><div id="indicators"></div><button type="button" id="cpe37-theme-button" class="cpe37-icon-button" aria-label="切换深浅色模式" title="切换深浅色模式">◐</button>{% if (ctx.authsession): %}<a class="cpe37-logout" href="{{ dispatcher.build_url('admin/logout') }}">退出</a>{% endif %}</div>
+ </header>
+ <div id="cpe37-backdrop" class="cpe37-backdrop" hidden></div>
+ <div class="cpe37-layout">
+  <aside id="cpe37-sidebar" class="cpe37-sidebar" aria-label="完整分类与插件菜单">
+   <div class="cpe37-sidebar-head"><strong>功能导航</strong><button type="button" id="cpe37-sidebar-close" class="cpe37-icon-button" aria-label="关闭菜单">×</button></div>
+   <label class="cpe37-search"><span>⌕</span><input id="cpe37-menu-search" type="search" placeholder="搜索分类和插件" aria-label="搜索分类和插件"></label>
+   <ul id="modemenu" class="cpe37-mode-menu" style="display:none"></ul>
+   <ul id="topmenu" class="cpe37-menu" style="display:none"></ul>
+  </aside>
+  <main id="maincontent" class="cpe37-main container">
+   {% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}<div class="alert-message warning"><h4>{{ _('No password set!') }}</h4><p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p>{% if (dispatcher.lookup('admin/system/admin')): %}<a href="{{ dispatcher.build_url('admin/system/admin') }}">{{ _('Go to password configuration...') }}</a>{% endif %}</div>{% endif %}
+   {% if (boardinfo.rootfs_type == 'initramfs'): %}<div class="alert-message warning"><h4>{{ _('System running in recovery (initramfs) mode.') }}</h4><p>{{ _('No changes to settings will be stored and are lost after rebooting. This mode should only be used to install a firmware upgrade') }}</p></div>{% endif %}
+   <noscript><div class="alert-message warning">{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</div></noscript>
+   <div id="tabmenu" style="display:none"></div>
+{% endif %}

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 300" role="img" aria-label="C2000MAX 5G CPE 设备插画">
+  <defs>
+    <linearGradient id="front" x1="0" y1="0" x2="1" y2=".2"><stop stop-color="#fff"/><stop offset=".62" stop-color="#f5f9ff"/><stop offset="1" stop-color="#dbe4f2"/></linearGradient>
+    <linearGradient id="side" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#b6c7dd"/><stop offset="1" stop-color="#e2eaf6"/></linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <filter id="shadow"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+  <ellipse cx="133" cy="275" rx="94" ry="13" fill="#84a6d2" opacity=".23" filter="url(#shadow)"/>
+  <path d="M55 46c0-15 12-27 27-27h93c17 0 31 13 31 29v201c0 14-12 26-26 26H81c-14 0-26-12-26-26Z" fill="url(#side)"/>
+  <path d="M53 46c0-15 12-27 27-27h88c15 0 27 12 27 27v201c0 15-12 27-27 27H80c-15 0-27-12-27-27Z" fill="url(#front)" stroke="#d6e2ef" stroke-width="2"/>
+  <path d="M66 47c0-10 8-18 18-18h31c-19 58-25 139-26 230H80c-8 0-14-7-14-15Z" fill="url(#shine)"/>
+  <path d="M191 35c5 5 8 12 8 20v185c0 9-3 16-8 22" fill="none" stroke="#c8d6e8" stroke-width="2"/>
+  <text x="90" y="89" fill="#788aa8" font-family="Arial,sans-serif" font-size="22" font-weight="700" letter-spacing="1">5G</text>
+  <path d="M118 199c8-7 19-7 27 0m-22 8c5-4 12-4 17 0" fill="none" stroke="#7186a3" stroke-width="3" stroke-linecap="round" opacity=".65"/>
+  <circle cx="131" cy="217" r="3" fill="#1abe8e"/>
+  <path d="M65 251h119" stroke="#c9d9e9" stroke-width="2"/>
+</svg>

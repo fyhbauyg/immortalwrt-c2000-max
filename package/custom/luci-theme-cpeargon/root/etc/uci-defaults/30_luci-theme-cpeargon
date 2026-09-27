@@ -1,0 +1,9 @@
+#!/bin/sh
+
+uci -q set luci.themes.CPEArgon='/luci-static/cpeargon'
+if [ -z "$IPKG_INSTROOT" ]; then
+	uci -q set luci.main.mediaurlbase='/luci-static/cpeargon'
+fi
+uci commit luci
+
+exit 0

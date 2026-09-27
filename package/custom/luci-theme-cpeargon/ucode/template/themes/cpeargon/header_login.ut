@@ -1,0 +1,24 @@
+{# Based on luci-theme-argon by Jerrykuku, Apache-2.0. #}
+{%
+	const boardinfo = ubus.call('system', 'board');
+	const hostname = striptags(boardinfo?.hostname ?? 'C2000MAX');
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="robots" content="noindex, nofollow">
+	<meta name="theme-color" content="#0b1326">
+	<title>{{ hostname }} · 登录 CPE 控制台</title>
+	<link rel="icon" href="{{ media }}/img/argon.svg" type="image/svg+xml">
+	<script src="{{ media }}/js/theme.js?v=2.0.4"></script>
+	<link rel="stylesheet" href="{{ media }}/css/cascade.css?v=2.0.4">
+	<link rel="stylesheet" id="cpe-argon-dark" href="{{ media }}/css/dark.css?v=2.0.4" media="not all">
+	<script>window.CpeTheme.syncStylesheet();</script>
+	<link rel="stylesheet" href="{{ media }}/css/daisyui.css?v=2.0.4">
+	<link rel="stylesheet" href="{{ media }}/css/cpe.css?v=2.0.4">
+	<link rel="stylesheet" href="{{ media }}/css/login.css?v=2.0.4">
+</head>
+<body class="cpe-theme cpe-login-page" data-page="login">

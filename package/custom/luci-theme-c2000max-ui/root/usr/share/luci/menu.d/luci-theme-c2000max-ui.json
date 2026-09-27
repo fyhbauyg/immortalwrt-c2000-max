@@ -1,0 +1,16 @@
+{
+  "admin/status/c2000max": {
+    "title": "C2000MAX 首页",
+    "order": 0,
+    "action": {
+      "type": "view",
+      "path": "c2000max/home"
+    },
+    "depends": {
+      "uci": { "luci": { "main": { "mediaurlbase": "/luci-static/c2000max-ui" } } },
+      "acl": [
+        "luci-theme-c2000max-ui"
+      ]
+    }
+  }
+}

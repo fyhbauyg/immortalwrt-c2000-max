@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>C2000MAX 5G CPE - 视觉预览</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="darkreader-lock" />
+    <link rel="stylesheet" href="../htdocs/luci-static/cpe37/cpe-dashboard.css" />
+    <link rel="stylesheet" href="../htdocs/luci-static/cpe37/dashboard.css" />
+    <link rel="stylesheet" href="../htdocs/luci-static/cpe37/style.css" />
+    <script>
+      (function() {
+        var theme = localStorage.getItem('openwrt_cpe_theme') || 'dark';
+        if (theme === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <script type="module" src="../htdocs/luci-static/cpe37/cpe-dashboard.js"></script>
+  </head>
+  <body class="antialiased selection:bg-[#0071e3]/20 selection:text-[#0071e3]">
+    <div id="root"></div>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# Register the theme without changing an existing user selection.
+uci -q set luci.themes.C2000MAX='/luci-static/c2000max'
+uci commit luci
+exit 0

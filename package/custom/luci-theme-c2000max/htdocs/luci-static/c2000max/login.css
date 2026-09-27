@@ -1,0 +1,42 @@
+/* Login is part of the theme, not an unstyled LuCI exception. */
+body.c2k-login { background: radial-gradient(circle at 12% 85%,#ddedff 0,transparent 37%),linear-gradient(130deg,#f8fbff,#edf5ff); }
+body.c2k-login .c2k-sidebar,body.c2k-login .c2k-menu-toggle,body.c2k-login .c2k-header-search,body.c2k-login .c2k-header-title,body.c2k-login #indicators { display: none !important; }
+body.c2k-login .c2k-brand { flex-basis: auto; }
+body.c2k-login .c2k-header-actions { margin-left: auto; }
+body.c2k-login .c2k-footer { padding-left: 28px; }
+body.c2k-login #maincontent.c2k-main { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(340px,.85fr); align-content: center; column-gap: clamp(24px,5vw,76px); max-width: 1250px; min-height: calc(100vh - 112px); padding: 40px clamp(20px,4vw,65px); }
+body.c2k-login #maincontent > *:not(.c2k-login-story):not(.alert-message):not(form) { grid-column: 1/-1; }
+body.c2k-login #tabmenu,body.c2k-login #maincontent noscript { display: none; }
+.c2k-login-story { position: relative; display: flex; flex-direction: column; justify-content: center; grid-column: 1; grid-row: 1/4; min-height: 500px; padding: 44px clamp(26px,4vw,58px); overflow: hidden; border: 1px solid #d9e9fc; border-radius: 26px; background: radial-gradient(circle at 78% 62%,#cfe6ff 0,transparent 39%),linear-gradient(140deg,#f6fbff,#dceeff); box-shadow: 0 22px 55px #27589813; }
+.c2k-login-story::before { position: absolute; inset: 0; content: ''; opacity: .47; background: linear-gradient(152deg,transparent 47%,#c4e0ff 48% 59%,transparent 60%),linear-gradient(21deg,transparent 53%,#d6ebff 54% 65%,transparent 66%); clip-path: polygon(0 82%,17% 68%,29% 75%,46% 38%,58% 55%,74% 25%,89% 58%,100% 47%,100% 100%,0 100%); }
+.c2k-login-overline { position: relative; z-index: 2; color: #2778f4; font-size: 12px; font-weight: 800; letter-spacing: .16em; }
+.c2k-login-story h1 { position: relative; z-index: 2; max-width: 10em; margin: 16px 0 8px; color: #162e59; font-size: clamp(32px,3.2vw,48px); line-height: 1.15; font-weight: 850; letter-spacing: -.045em; }
+.c2k-login-story p { position: relative; z-index: 2; margin: 0; color: #5f779b; font-size: 15px; }
+.c2k-login-story-chips { position: relative; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; }
+.c2k-login-story-chips span { padding: 7px 11px; border: 1px solid #d1e4fb; border-radius: 99px; color: #366da9; background: #ffffffbc; font-size: 12px; font-weight: 700; }
+.c2k-login-story img { position: absolute; right: -15px; bottom: -96px; width: min(48%,270px); height: 410px; object-fit: contain; filter: drop-shadow(0 20px 19px #7293b85c); }
+body.c2k-login #maincontent > .alert-message { grid-column: 2; margin: 0 0 14px; padding: 10px 13px; font-size: 11px; }
+body.c2k-login #maincontent > .alert-message h4 { margin: 0 0 3px; font-size: 13px; }
+body.c2k-login #maincontent > .alert-message p { margin: 0; }
+body.c2k-login #maincontent > .alert-message a { display: none; }
+body.c2k-login #maincontent > form { grid-column: 2; width: 100%; padding: clamp(22px,3vw,42px); border: 1px solid var(--c2k-line); border-radius: 22px; background: var(--c2k-surface); box-shadow: 0 16px 46px #234f881a; }
+body.c2k-login #maincontent > form .cbi-map { margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+body.c2k-login #maincontent > form .cbi-map > h2 { margin: 0 0 8px; color: var(--c2k-text); font-size: 25px; font-weight: 800; }
+body.c2k-login #maincontent > form .cbi-map-descr { margin-bottom: 26px; color: var(--c2k-muted); font-size: 13px; }
+body.c2k-login #maincontent > form .cbi-section,body.c2k-login #maincontent > form .cbi-section-node { margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+body.c2k-login #maincontent > form .cbi-value { display: block; margin: 0 0 18px; padding: 0; }
+body.c2k-login #maincontent > form .cbi-value-title { display: block; float: none; width: auto; margin: 0 0 7px; color: var(--c2k-text); font-size: 12px; font-weight: 700; }
+body.c2k-login #maincontent > form .cbi-value-field { margin: 0; }
+body.c2k-login #maincontent.c2k-main > form input.cbi-input-text:not([type=submit]) { width: 100%; max-width: none; height: 46px; padding: 0 14px; border: 1px solid var(--c2k-line); border-radius: 10px; color: var(--c2k-text); background: var(--c2k-row); font-size: 14px; }
+body.c2k-login #maincontent > form input.cbi-input-text:focus { border-color: #2778f4; box-shadow: 0 0 0 3px #2778f421; outline: none; }
+body.c2k-login #maincontent > form .cbi-page-actions { margin: 12px 0 0; padding: 0; border: 0; text-align: left; }
+body.c2k-login #maincontent.c2k-main > form input.cbi-button[type=submit] { width: 100%; min-height: 46px; border: 0; border-radius: 10px; color: #fff; background: linear-gradient(105deg,#2076f6,#20a6df); box-shadow: 0 9px 20px #2a81ef31; font-size: 14px; font-weight: 800; cursor: pointer; }
+body.c2k-login #maincontent > form input[type=submit]:hover { filter: brightness(1.04); transform: translateY(-1px); }
+[data-theme="c2000max-dark"] body.c2k-login { background: radial-gradient(circle at 10% 85%,#1d3d60 0,transparent 40%),#0e1a2d; }
+[data-theme="c2000max-dark"] .c2k-login-story { border-color: #34547d; background: radial-gradient(circle at 78% 62%,#25466e 0,transparent 42%),linear-gradient(140deg,#172b49,#1f3f64); }
+[data-theme="c2000max-dark"] .c2k-login-story::before { opacity: .13; }
+[data-theme="c2000max-dark"] .c2k-login-story h1 { color: #f5f9ff; }
+[data-theme="c2000max-dark"] .c2k-login-story p { color: #bad0ed; }
+[data-theme="c2000max-dark"] .c2k-login-story-chips span { color: #d5e8ff; background: #29476f; border-color: #41648f; }
+@media (max-width: 900px) { body.c2k-login #maincontent.c2k-main { grid-template-columns: 1fr; max-width: 640px; gap: 16px; padding: 20px 18px 32px; } .c2k-login-story { grid-column: 1; grid-row: auto; min-height: 250px; padding: 26px; } .c2k-login-story img { right: -26px; bottom: -102px; width: 180px; } body.c2k-login #maincontent > .alert-message,body.c2k-login #maincontent > form { grid-column: 1; } }
+@media (max-width: 500px) { .c2k-login-story { min-height: 218px; } .c2k-login-story h1 { max-width: 8em; font-size: 27px; } .c2k-login-story p { max-width: 16em; font-size: 12px; } .c2k-login-story-chips { gap: 5px; margin-top: 18px; } .c2k-login-story-chips span { padding: 4px 7px; font-size: 10px; } .c2k-login-story img { width: 135px; right: -26px; bottom: -119px; opacity: .82; } body.c2k-login #maincontent > form { padding: 23px; } }

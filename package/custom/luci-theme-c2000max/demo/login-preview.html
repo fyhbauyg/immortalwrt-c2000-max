@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-cn" data-theme="c2000max-light">
+	<head><script src="/luci-static/c2000max/theme.js"></script>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="color-scheme" content="light dark">
+		<meta name="darkreader-lock">
+		<title>C2000MAX | 概况</title>
+		
+		<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+		<link rel="stylesheet" href="/luci-static/bootstrap/mobile.css" media="only screen and (max-device-width: 854px)">
+		<link rel="stylesheet" href="/luci-static/c2000max/daisyui.css?v=1.0.0">
+		<link rel="stylesheet" href="/luci-static/c2000max/c2000max.css?v=1.0.0">
+		<link rel="stylesheet" href="/luci-static/c2000max/dashboard.css?v=1.1.0">
+		<link rel="stylesheet" href="/luci-static/c2000max/login.css?v=1.1.0">
+		<link rel="icon" href="/luci-static/c2000max/logo.svg" type="image/svg+xml">
+		
+		
+	</head>
+	<body class="lang_zh-cn c2k-app c2k-login" data-page="">
+		<a class="c2k-skip" href="#maincontent">跳到内容</a>
+		<header class="c2k-header navbar">
+			<button id="c2k-menu-toggle" type="button" class="btn btn-ghost c2k-menu-toggle" aria-controls="c2k-sidebar" aria-expanded="false" aria-label="Open menu">☰</button>
+			<a class="c2k-brand" href="/cgi-bin/luci/admin/status/overview" aria-label="C2000MAX">
+				<img class="c2k-brand-logo" src="/luci-static/c2000max/logo.svg" alt="">
+				<span class="c2k-brand-text"><strong>CPE 控制面板</strong><small>C2000MAX · V37.01</small></span>
+			</a>
+			<div class="c2k-header-title">概况</div>
+			<div class="c2k-header-search" role="search"><svg class="c2k-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="c2k-menu-search" type="search" placeholder="Search menu..." aria-label="Search menu"><kbd>/</kbd></div>
+			<div class="c2k-header-actions">
+				<div id="indicators"></div>
+				<fieldset class="c2k-theme-switch" aria-label="Color theme">
+					<legend class="c2k-sr-only">Color theme</legend>
+					<label title="Use system theme"><input type="radio" name="c2k-theme" value="auto" aria-label="Use system theme"><span>◐</span></label>
+					<label title="Light theme"><input type="radio" name="c2k-theme" class="theme-controller" value="c2000max-light" aria-label="Light theme"><span>☀</span></label>
+					<label title="Dark theme"><input type="radio" name="c2k-theme" class="theme-controller" value="c2000max-dark" aria-label="Dark theme"><span>☾</span></label>
+				</fieldset>
+			</div>
+		</header>
+		<div class="c2k-shell">
+			<div id="c2k-drawer-backdrop" class="c2k-drawer-backdrop" hidden></div>
+			<aside id="c2k-sidebar" class="c2k-sidebar" aria-label="导航">
+				<div class="c2k-sidebar-heading">导航</div>
+				<ul id="modemenu" class="c2k-mode-menu" style="display:none"></ul>
+				<ul id="topmenu" class="c2k-nav menu" style="display:none"></ul>
+				<div class="c2k-sidebar-bottom"><div class="c2k-sidebar-art" aria-hidden="true"></div><strong>5G · C2000MAX</strong><span>Connect a Smarter World</span></div>
+			</aside>
+			<main id="maincontent" class="c2k-main container">
+				<section class="c2k-login-story" aria-label="C2000MAX">
+					<div class="c2k-login-overline">C2000MAX · 5G CPE</div>
+					<h1>连接更广阔的世界</h1>
+					<p>轻快、安全、清晰地管理你的网络。</p>
+					<div class="c2k-login-story-chips"><span>网络与 Wi-Fi</span><span>5G 模组</span><span>设备与服务</span></div>
+					<img src="/luci-static/c2000max/cpe-device.svg" alt="C2000MAX 设备插画">
+				</section>
+				<div class="alert-message warning alert alert-warning" role="alert"><h4>未设置密码！</h4><p>尚未设置密码。请设置管理员密码以保护此设备。</p>
+<a class="btn" href="/cgi-bin/luci/admin/system/admin">转到密码配置…</a></div>
+				<noscript><div class="alert-message warning alert alert-warning" role="alert">必须开启浏览器的 JavaScript 支持，否则 LuCI 无法正常工作。</div></noscript>
+				<div id="tabmenu" style="display:none"></div>
+
+
+
+<form action="#" onsubmit="return false">
+
+	<div class="cbi-map">
+		<h2 name="content">需要授权</h2>
+		<div class="cbi-map-descr">
+			请输入用户名和密码。
+		</div>
+		<div class="cbi-section"><div class="cbi-section-node">
+			<div class="cbi-value">
+				<label class="cbi-value-title">用户名</label>
+				<div class="cbi-value-field">
+					<input class="cbi-input-text" type="text" name="luci_username" value="root" />
+				</div>
+			</div>
+			<div class="cbi-value cbi-value-last">
+				<label class="cbi-value-title">密码</label>
+				<div class="cbi-value-field">
+					<input class="cbi-input-text" type="password" name="luci_password" />
+				</div>
+			</div>
+		</div></div>
+	</div>
+
+	<div class="cbi-page-actions">
+		<input type="submit" value="登录" class="btn cbi-button cbi-button-apply" />
+	</div>
+</form>
+
+
+
+
+
+
+			</main>
+		</div>
+		<footer class="c2k-footer">
+			<span>LuCI c2000max-v37.01 branch 26.248.12024~e9cdc0a · ImmortalWrt 25.12-SNAPSHOT</span>
+			<span>C2000MAX</span>
+		</footer>
+		
+		
+	</body>
+</html>
+
+<!-- Lua compatibility mode active: yes -->
+

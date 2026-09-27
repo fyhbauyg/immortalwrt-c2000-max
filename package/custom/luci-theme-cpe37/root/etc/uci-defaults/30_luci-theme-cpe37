@@ -1,0 +1,5 @@
+#!/bin/sh
+uci -q set luci.themes.CPE37='/luci-static/cpe37'
+uci -q set luci.main.mediaurlbase='/luci-static/cpe37'
+uci -q commit luci
+exit 0

@@ -735,6 +735,7 @@ cell_info()
                 add_plain_info_entry "UL Bandwidth" "$lte_ul_bandwidth" "UL Bandwidth"
                 add_plain_info_entry "DL Bandwidth" "$lte_dl_bandwidth" "DL Bandwidth"
                 add_plain_info_entry "TAC" "$lte_tac" "Tracking area code of cell served by neighbor Enb"
+                add_bar_info_entry "RSRP" "$lte_rsrp" "Reference Signal Received Power" -140 -44 dBm
                 add_bar_info_entry "RSRQ" "$lte_rsrq" "Reference Signal Received Quality" -20 20 dBm 
                 add_bar_info_entry "RSSI" "$lte_rssi" "Received Signal Strength Indicator" -140 -44 dBm
                 add_bar_info_entry "SINR" "$lte_sinr" "Signal to Interference plus Noise Ratio Bandwidth" -23 40 dB

@@ -1,0 +1,296 @@
+/* Apple HIG Frosted Glass Login Window matching openwrt-cpe-theme template */
+:root {
+  --apple-blue: #0071e3;
+  --apple-blue-hover: #0077ed;
+  --apple-text-dark: #1d1d1f;
+  --apple-text-light: #f5f5f7;
+}
+
+*, *::before, *::after {
+  text-shadow: none !important;
+  font-synthesis: none !important;
+}
+
+body.cpe-login-page {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: normal !important;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  background-color: #000000;
+  color: #f5f5f7;
+  overflow: hidden;
+  position: relative;
+  user-select: none;
+}
+
+/* Background image with soft dark overlay and blur */
+.cpe-login-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-image: url('https://bing.biturl.top/?resolution=1920&format=image&index=0'), url('../img/cpe-landscape.webp'), url('../img/bg1.jpg');
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.04);
+  transition: transform 0.7s ease;
+}
+
+.cpe-login-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+html[data-theme="cpe-light"] .cpe-login-overlay {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* Top Right Quick Controls */
+.cpe-login-top-controls {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cpe-glass-btn {
+  height: 36px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  text-decoration: none;
+  padding: 0 12px;
+}
+
+.cpe-glass-btn.circle {
+  width: 36px;
+  padding: 0;
+}
+
+.cpe-glass-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: scale(1.04);
+}
+
+/* Center Frosted Glass Card */
+.cpe-login-card-container {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 384px;
+  margin: 16px;
+  padding: 32px 28px 28px;
+  border-radius: 28px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+html[data-theme="cpe-light"] .cpe-login-card-container {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.65);
+  color: #1d1d1f;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
+}
+
+.cpe-login-icon {
+  margin-bottom: 12px;
+  color: #0071e3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+html[data-theme="cpe-dark"] .cpe-login-icon {
+  color: #2997ff;
+}
+
+.cpe-login-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: normal !important;
+  color: #ffffff;
+}
+
+html[data-theme="cpe-light"] .cpe-login-title {
+  color: #1d1d1f;
+}
+
+.cpe-login-subtitle {
+  margin: 4px 0 24px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+html[data-theme="cpe-light"] .cpe-login-subtitle {
+  color: rgba(29, 29, 31, 0.7);
+}
+
+/* Form inputs */
+.cpe-login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+
+.cpe-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cpe-form-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+html[data-theme="cpe-light"] .cpe-form-label {
+  color: rgba(29, 29, 31, 0.8);
+}
+
+.cpe-input-wrapper {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cpe-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+html[data-theme="cpe-light"] .cpe-input {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: #1d1d1f;
+}
+
+.cpe-input:focus {
+  border-color: #0071e3;
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.35);
+}
+
+.cpe-pw-toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+html[data-theme="cpe-light"] .cpe-pw-toggle {
+  color: rgba(29, 29, 31, 0.6);
+}
+
+.cpe-pw-toggle:hover {
+  color: #ffffff;
+}
+
+html[data-theme="cpe-light"] .cpe-pw-toggle:hover {
+  color: #1d1d1f;
+}
+
+.cpe-login-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #0071e3;
+  color: #ffffff;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(0, 113, 227, 0.35);
+}
+
+.cpe-login-btn:hover {
+  background: #0077ed;
+  box-shadow: 0 6px 20px rgba(0, 113, 227, 0.45);
+  transform: translateY(-1px);
+}
+
+.cpe-login-btn:active {
+  transform: translateY(0);
+}
+
+.cpe-login-footer-info {
+  margin-top: 24px;
+  font-size: 11px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.02em;
+}
+
+html[data-theme="cpe-light"] .cpe-login-footer-info {
+  color: rgba(29, 29, 31, 0.6);
+}
+
+.cpe-alert-error {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: rgba(255, 59, 48, 0.15);
+  border: 1px solid rgba(255, 59, 48, 0.4);
+  color: #ff453a;
+  font-size: 12px;
+  text-align: left;
+}

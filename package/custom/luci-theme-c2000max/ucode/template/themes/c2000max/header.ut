@@ -1,0 +1,85 @@
+{#
+  Based on the LuCI Bootstrap theme template.
+  Copyright 2008-2022 LuCI contributors. Apache-2.0.
+-#}
+{%
+	import { getuid, getspnam } from 'luci.core';
+	const boardinfo = ubus.call('system', 'board') ?? {};
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}" data-theme="c2000max-light">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="color-scheme" content="light dark">
+		<meta name="darkreader-lock">
+		<title>{{ striptags(`${boardinfo.hostname ?? 'C2000MAX'}${dispatched?.title ? ` | ${_(dispatched.title)}` : ''}`) }}</title>
+		<script src="{{ media }}/theme.js?v=1.2.0"></script>
+		<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+		<link rel="stylesheet" href="/luci-static/bootstrap/mobile.css" media="only screen and (max-device-width: 854px)">
+		<link rel="stylesheet" href="{{ media }}/daisyui.css?v=1.2.0">
+		<link rel="stylesheet" href="{{ media }}/c2000max.css?v=1.2.0">
+		<link rel="stylesheet" href="{{ media }}/dashboard.css?v=1.2.0">
+		<link rel="stylesheet" href="{{ media }}/login.css?v=1.2.0">
+		<link rel="icon" href="{{ media }}/logo.svg" type="image/svg+xml">
+		{% if (dispatched?.css): %}
+		<link rel="stylesheet" href="{{ resource }}/{{ dispatched.css }}">
+		{% endif %}
+		{% if (css): %}
+		<style>{{ css }}</style>
+		{% endif %}
+		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
+		<script src="{{ resource }}/cbi.js"></script>
+	</head>
+	<body class="lang_{{ dispatcher.lang }} {{ blank_page ? 'c2k-blank' : 'c2k-app' }} {{ !ctx.authsession && !blank_page ? 'c2k-login' : '' }}" data-page="{{ entityencode(join('-', length(ctx.request_path) ? ctx.request_path : ctx.path), true) }}">
+		{% if (!blank_page): %}
+		<a class="c2k-skip" href="#maincontent">{{ _('Skip to content') }}</a>
+		<header class="c2k-header navbar">
+			<button id="c2k-menu-toggle" type="button" class="btn btn-ghost c2k-menu-toggle" aria-controls="c2k-sidebar" aria-expanded="false" aria-label="打开菜单">☰</button>
+			<a class="c2k-brand" href="{{ dispatcher.build_url('admin/status/overview') }}" aria-label="C2000MAX">
+				<img class="c2k-brand-logo" src="{{ media }}/logo.svg" alt="">
+				<span class="c2k-brand-text"><strong>CPE 控制面板</strong><small>{{ striptags(boardinfo.hostname ?? 'OpenWrt') }} · V37.01</small></span>
+			</a>
+			<div class="c2k-header-title">{{ dispatched?.title ? _(dispatched.title) : _('Control center') }}</div>
+			<div class="c2k-header-search" role="search"><svg class="c2k-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="c2k-menu-search" type="search" placeholder="搜索设置或功能…" aria-label="搜索菜单"><kbd>/</kbd></div>
+			<div class="c2k-header-actions">
+				<div id="indicators"></div>
+				<fieldset class="c2k-theme-switch" aria-label="{{ _('Color theme') }}">
+					<legend class="c2k-sr-only">{{ _('Color theme') }}</legend>
+					<label title="{{ _('Use system theme') }}"><input type="radio" name="c2k-theme" value="auto" aria-label="{{ _('Use system theme') }}"><span>◐</span></label>
+					<label title="{{ _('Light theme') }}"><input type="radio" name="c2k-theme" class="theme-controller" value="c2000max-light" aria-label="{{ _('Light theme') }}"><span>☀</span></label>
+					<label title="{{ _('Dark theme') }}"><input type="radio" name="c2k-theme" class="theme-controller" value="c2000max-dark" aria-label="{{ _('Dark theme') }}"><span>☾</span></label>
+				</fieldset>
+			</div>
+		</header>
+		<div class="c2k-shell">
+			<div id="c2k-drawer-backdrop" class="c2k-drawer-backdrop" hidden></div>
+			<aside id="c2k-sidebar" class="c2k-sidebar" aria-label="{{ _('Navigation') }}">
+				<div class="c2k-sidebar-heading">{{ _('Navigation') }}</div>
+				<div class="c2k-mobile-search"><input id="c2k-mobile-menu-search" type="search" placeholder="搜索菜单与插件…" aria-label="搜索菜单与插件"></div>
+				<ul id="modemenu" class="c2k-mode-menu" style="display:none"></ul>
+				<ul id="topmenu" class="c2k-nav menu" style="display:none"></ul>
+				<div class="c2k-sidebar-bottom"><div class="c2k-sidebar-art" aria-hidden="true"></div><strong>5G · C2000MAX</strong><span>Connect a Smarter World</span></div>
+			</aside>
+			<main id="maincontent" class="c2k-main container">
+				{% if (!ctx.authsession): %}
+				<section class="c2k-login-story" aria-label="C2000MAX">
+					<div class="c2k-login-overline">C2000MAX · 5G CPE</div>
+					<h1>连接更广阔的世界</h1>
+					<p>轻快、安全、清晰地管理你的网络。</p>
+					<div class="c2k-login-story-chips"><span>网络与 Wi-Fi</span><span>5G 模组</span><span>设备与服务</span></div>
+					<img src="{{ media }}/cpe-device.svg" alt="C2000MAX 设备插画">
+				</section>
+				{% endif %}
+				{% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}
+				<div class="alert-message warning alert alert-warning" role="alert"><h4>{{ _('No password set!') }}</h4><p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p>
+				{% if (dispatcher.lookup('admin/system/admin')): %}<a class="btn" href="{{ dispatcher.build_url('admin/system/admin') }}">{{ _('Go to password configuration...') }}</a>{% endif %}</div>
+				{% endif %}
+				{% if (boardinfo.rootfs_type == 'initramfs'): %}
+				<div class="alert-message warning alert alert-warning" role="alert"><h4>{{ _('System running in recovery (initramfs) mode.') }}</h4><p>{{ _('No changes to settings will be stored and are lost after rebooting. This mode should only be used to install a firmware upgrade') }}</p>
+				{% if (dispatcher.lookup('admin/system/flash')): %}<a class="btn" href="{{ dispatcher.build_url('admin/system/flash') }}">{{ _('Go to firmware upgrade...') }}</a>{% endif %}</div>
+				{% endif %}
+				<noscript><div class="alert-message warning alert alert-warning" role="alert">{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</div></noscript>
+				<div id="tabmenu" style="display:none"></div>
+		{% endif %}

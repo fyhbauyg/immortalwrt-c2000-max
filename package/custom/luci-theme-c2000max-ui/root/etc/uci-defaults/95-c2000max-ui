@@ -1,0 +1,7 @@
+#!/bin/sh
+# Register without changing the user's active theme.
+uci -q set luci.themes.C2000MAX_UI='/luci-static/c2000max-ui'
+uci -q commit luci
+/etc/init.d/c2000max-wallpaper enable
+[ -n "$IPKG_INSTROOT" ] || /etc/init.d/c2000max-wallpaper start
+exit 0

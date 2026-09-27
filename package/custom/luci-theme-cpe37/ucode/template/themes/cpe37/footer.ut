@@ -1,0 +1,19 @@
+{% if (!blank_page): %}
+  </main>
+ </div>
+ <footer class="cpe37-footer">{{ version.distname }} {{ version.distversion }} · {{ version.luciname }} {{ version.luciversion }}</footer>
+ {% if (ctx.authsession): %}
+ <nav class="cpe37-mobile-tabs" aria-label="手机快捷导航">
+  <a href="{{ dispatcher.build_url('admin/status/overview') }}" data-cpe37-tab="overview"><span>▦</span><small>总览</small></a>
+  <a href="{{ dispatcher.build_url('admin/modem/qmodem') }}" data-cpe37-tab="modem"><span>▥</span><small>5G模组</small></a>
+  <a href="{{ dispatcher.build_url('admin/network/wireless') }}" data-cpe37-tab="wireless"><span>◉</span><small>无线</small></a>
+  <button type="button" id="cpe37-bottom-menu" aria-label="打开全部分类和插件"><span>☷</span><small>菜单</small></button>
+  <a href="{{ dispatcher.build_url('admin/logout') }}"><span>⇥</span><small>退出</small></a>
+ </nav>
+ {% endif %}
+ <script>L.require('menu-bootstrap')</script>
+ <script src="{{ media }}/nav.js?v=1" defer></script>
+ {% if (ctx.authsession): %}<script src="{{ media }}/dashboard.js?v=1" defer></script>{% endif %}
+{% endif %}
+</body>
+</html>

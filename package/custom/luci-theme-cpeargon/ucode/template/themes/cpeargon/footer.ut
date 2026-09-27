@@ -1,0 +1,9 @@
+			</div></div>
+			<footer class="cpe-footer"><span>C2000MAX CPE · LuCI {{ version.luciversion }}</span><ul class="breadcrumb" id="modemenu" style="display:none"></ul></footer>
+		</div>
+	</div>
+	<script>var luciLocation = {{ ctx.path }};</script>
+	<script>window.CpeTheme.bindControls();</script>
+	<script>L.require('menu-cpeargon')</script>
+</body>
+</html>

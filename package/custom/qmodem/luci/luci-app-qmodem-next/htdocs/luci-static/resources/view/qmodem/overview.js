@@ -45,7 +45,7 @@ var LuciTable = function() {
 
 LuciTable.prototype = {
 	initTable: function() {
-		this.fieldset = E('fieldset', { 'class': 'cbi-section collapsible draggable', 'draggable': 'true' });
+		this.fieldset = E('fieldset', { 'class': 'cbi-section collapsible draggable' });
 		//this.legend = E('legend', {});
 		this.title_span = E('h2', { 'class': 'panel-title' });
 		var table = E('table', { 'class': 'table' });
@@ -280,8 +280,23 @@ return view.extend({
 		if (legend) legend.addEventListener('click', toggleCollapse);
 		if (title) title.addEventListener('click', toggleCollapse);
 		
+		// Keep card contents scrollable. Only a mouse on the heading can start sorting.
+		[legend, title].filter(Boolean).forEach(function(handle) {
+			handle.draggable = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+			handle.addEventListener('pointerdown', function(e) {
+				handle.draggable = e.pointerType === 'mouse' && e.button === 0;
+			});
+			handle.addEventListener('touchstart', function() {
+				handle.draggable = false;
+			}, { passive: true });
+		});
+
 		// Drag and drop handlers
 		fieldset.addEventListener('dragstart', function(e) {
+			if ((e.target !== legend && e.target !== title) || !e.target.draggable) {
+				e.preventDefault();
+				return;
+			}
 			fieldset.classList.add('dragging');
 			e.dataTransfer.effectAllowed = 'move';
 			e.dataTransfer.setData('text/plain', className);

@@ -1,0 +1,50 @@
+/* Shared semantic tokens. Override these to create another theme. */
+:root {
+  color-scheme: light;
+  --font-sans: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --font-mono: Consolas, "SFMono-Regular", monospace;
+  --control-height: 32px; --control-padding-y: 5px; --control-padding-x: 10px;
+  --checkbox-size: 16px; --form-row-padding: 8px; --section-padding: 16px;
+  --toolbar-height: 40px; --table-cell-padding: 8px 10px;
+  --field-max: 36rem; --motion-fast: 160ms;
+  --text-xs: .75rem; --text-sm: .875rem; --text-md: 1rem; --text-lg: 1.125rem;
+  --text-xl: 1.5rem; --text-2xl: 2rem; --text-3xl: 2.5rem;
+  --leading: 1.5; --leading-tight: 1.25;
+  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
+  --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
+  --radius-sm: .375rem; --radius-md: .625rem; --radius-lg: 1rem; --radius-pill: 999px;
+  --page: #eef3f8; --surface: #fff; --surface-soft: #f6f8fc; --surface-raised: #fff;
+  --sidebar: #f8fafd; --hover: #eaf0f9; --text: #1d2b40; --text-secondary: #53657d; --text-muted: #5d6e84;
+  --border: #dce5ef; --border-soft: #e8eef5;
+  --accent: #2563eb; --accent-hover: #1d4ed8; --accent-soft: #e9f0ff; --on-accent: #fff;
+  --success: #087a5c; --success-soft: #e5f5ee; --warning: #a15c08; --warning-soft: #fff3dd;
+  --danger: #c43b40; --danger-soft: #feeeee;
+  --info: #245ec0; --info-soft: #eaf1ff;
+  --control-border: #7b8b9f; --disabled-surface: #edf0f4;
+  --icon-network: #356bd1; --icon-network-soft: #eaf1ff;
+  --icon-signal: #168577; --icon-signal-soft: #e5f5f0;
+  --icon-device: #8460c5; --icon-device-soft: #f1ecfb;
+  --icon-system: #a77422; --icon-system-soft: #fbf2e3;
+  --ram-active: #3182f6; --ram-cache: #28a9b9; --ram-free: #d9e3f0; --flash: #e9a12c; --swap: #8d7ee5; --track: #e6ecf4;
+  --shadow: 0 8px 32px #233d6506; --shadow-raised: 0 16px 48px #18335624;
+  --overlay: #11263e66; --focus: #2563eb; --ring: #afccfc80; --story-text: #183354; --story-muted: #405b79;
+  --blue: var(--accent); --muted: var(--text-muted); --ink: var(--text-secondary);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #111111; --surface: #1c1c1c; --surface-soft: #252525; --surface-raised: #2b2b2b;
+  --sidebar: #171717; --hover: #303030; --text: #f0f0f0; --text-secondary: #c4c4c4; --text-muted: #a0a0a0;
+  --border: #3a3a3a; --border-soft: #303030;
+  --accent: #e3e3e3; --accent-hover: #ffffff; --accent-soft: #333333; --on-accent: #171717;
+  --success: #6ddcb3; --success-soft: #193e36; --warning: #f4c16b; --warning-soft: #483921;
+  --danger: #ff9b9e; --danger-soft: #4a2932;
+  --info: #8aaff5; --info-soft: #202c40;
+  --control-border: #797979; --disabled-surface: #292929;
+  --icon-network: #8aaff5; --icon-network-soft: #8aaff514;
+  --icon-signal: #6bcbb5; --icon-signal-soft: #6bcbb514;
+  --icon-device: #b39ae6; --icon-device-soft: #b39ae614;
+  --icon-system: #dfb66f; --icon-system-soft: #dfb66f14;
+  --ram-active: #649cfb; --ram-cache: #45bdca; --ram-free: #4b4b4b; --flash: #edb457; --swap: #aa9df6; --track: #343434;
+  --shadow: 0 8px 32px #00000010; --shadow-raised: 0 16px 48px #00000050;
+  --overlay: #000000aa; --focus: #dedede; --ring: #ffffff20; --story-text: #f5f5f5; --story-muted: #c4c4c4;
+}
