@@ -363,7 +363,8 @@
  *
  * Identity reads do not need the vendor firmware's 52 MHz quad-I/O calibration
  * path.  Keep this deliberately conservative at 10 MHz, single-I/O and
- * read-only so a failed flash probe cannot affect the SD storage path.
+ * read-only except for the validated boot-priority U-Boot environment. The
+ * flash controller remains independent from the SD storage path.
  */
 &spi2 {
 	compatible = "mediatek,ipm-spi-quad", "mediatek,spi-ipm";
@@ -383,11 +384,11 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			/* Diagnostics only. TF-card firmware must not write SPI-NOR. */
+			/* Only the isolated environment is writable for boot priority. */
 			partition@40000 {
 				label = "u-boot-env";
 				reg = <0x040000 0x010000>;
-				read-only;
+				/* Writable for validated boot-priority transactions. */
 			};
 
 			partition@50000 {

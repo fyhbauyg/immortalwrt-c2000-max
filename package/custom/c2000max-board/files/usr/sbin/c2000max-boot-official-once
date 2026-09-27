@@ -1,29 +1,3 @@
 #!/bin/sh
-# The old one-shot scheme wrote the OEM JFFS2 overlay and SPI boot environment.
-# V36.5 provides diagnostics only. All exposed SPI partitions are read-only in
-# the DT as a second layer; there is intentionally no software opt-out here.
-
-json_result() {
-	local ready="$1" armed="$2" message="$3"
-	. /usr/share/libubox/jshn.sh
-	json_init
-	json_add_boolean ready "$ready"
-	json_add_boolean armed "$armed"
-	json_add_string message "$message"
-	json_dump
-}
-
-status_json() {
-	json_result 0 0 '官方 Flash 写保护已启用；一次性切换已停用。请关机后拔出 TF 卡启动官方系统。'
-}
-
-arm_once() {
-	json_result 0 0 '官方 Flash 写保护已启用，未修改启动环境或官方配置区，也未安排重启。'
-	return 1
-}
-
-case "${1:-status-json}" in
-	status-json|status) status_json ;;
-	arm|arm-reboot) arm_once ;;
-	*) echo "usage: $0 {status-json|status|arm|arm-reboot}" >&2; exit 2 ;;
-esac
+printf '%s\n' '{"ready":false,"armed":false,"message":"一次性启动已移除，请在重启页面设置启动优先级。"}'
+exit 1

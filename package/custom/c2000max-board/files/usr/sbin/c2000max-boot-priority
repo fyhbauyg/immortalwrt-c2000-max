@@ -1,0 +1,143 @@
+#!/bin/sh
+# Change the persistent SPI-NOR boot preference, never a one-shot boot command.
+ENV_SIZE=65536
+LEGACY_BOOTCMD='setenv bootcmd; setenv bootmenu_default; setenv bootmenu_delay; setenv boot_from_sd 1; if saveenv; then setenv boot_from_sd 0; else setenv boot_from_sd 1; fi; mtkboardboot'
+LEGACY_PREBOOT='setenv preboot; setenv boot_from_sd 1; saveenv; setenv boot_from_sd 0'
+LEGACY_MENU='Startup system (one-time factory)=setenv boot_from_sd 1; setenv bootmenu_0; saveenv; setenv boot_from_sd 0; mtkboardboot'
+BACKUP=/etc/c2000max/u-boot-env-before-priority-change.bin
+WORK=
+CURRENT=
+MIGRATE=0
+
+result() {
+ . /usr/share/libubox/jshn.sh
+ json_init
+ json_add_boolean ready "$1"
+ json_add_boolean success "$2"
+ case "$CURRENT" in 1) json_add_string priority sd ;; 0) json_add_string priority flash ;; esac
+ json_add_boolean legacy_pending "$MIGRATE"
+ json_add_string message "$3"
+ json_dump
+}
+cleanup() { [ -z "$WORK" ] || rm -rf "$WORK"; }
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+prepare() {
+ local matches part hexsize hexerase flags kind offset
+ command -v fw_printenv >/dev/null 2>&1 && command -v fw_setenv >/dev/null 2>&1 || return 1
+ tr '\0' '\n' < /sys/firmware/devicetree/base/compatible | grep -Fxq 'nradio,c2000-max' || return 1
+ matches="$(awk '$4 == "\"u-boot-env\"" {print $1, $2, $3}' /proc/mtd)"
+ [ "$(printf '%s\n' "$matches" | wc -l)" -eq 1 ] || return 1
+ read -r part hexsize hexerase <<EOF
+$matches
+EOF
+ case "$part" in mtd[0-9]*:) ;; *) return 1 ;; esac
+ [ "$hexsize" = 00010000 ] || return 1
+ case "$hexerase" in ''|*[!0-9a-fA-F]*) return 1 ;; esac
+ ERASE=$((0x$hexerase))
+ [ "$ERASE" -ge 4096 ] && [ "$ERASE" -le "$ENV_SIZE" ] && [ $((ENV_SIZE % ERASE)) -eq 0 ] || return 1
+ part=${part%:}
+ ENV_MTD=/dev/$part
+ [ -c "$ENV_MTD" ] || return 1
+ kind="$(cat "/sys/class/mtd/$part/type")"
+ [ "$kind" = nor ] || return 1
+ # Bind to the partition's actual SPI offset, not a same-named SD GPT entry.
+ offset="$(cat "/sys/class/mtd/$part/offset" 2>/dev/null)" || return 1
+ [ "$offset" = 262144 ] || return 1
+ flags="$(cat "/sys/class/mtd/$part/flags")"
+ case "$flags" in 0x*) ;; *) return 1 ;; esac
+ case "${flags#0x}" in ''|*[!0-9a-fA-F]*) return 1 ;; esac
+ WRITABLE=$((flags & 0x400))
+ WORK="$(mktemp -d /tmp/c2000-boot-priority.XXXXXX)" || return 1
+ printf '%s 0x0 0x10000 0x%x\n' "$ENV_MTD" "$ERASE" > "$WORK/fw_env.config" || return 1
+ fw_printenv -c "$WORK/fw_env.config" > "$WORK/before" 2>/dev/null || return 1
+ CURRENT="$(env_get boot_from_sd)" || return 1
+ case "$CURRENT" in 0|1) ;; *) return 1 ;; esac
+}
+env_get() { fw_printenv -c "$WORK/fw_env.config" -n "$1" 2>/dev/null; }
+
+check_commands() {
+ local cmd def delay pre menu
+ cmd="$(env_get bootcmd || true)"
+ def="$(env_get bootmenu_default || true)"
+ delay="$(env_get bootmenu_delay || true)"
+ pre="$(env_get preboot || true)"
+ menu="$(env_get bootmenu_0 || true)"
+ MIGRATE=0
+ if [ -n "$cmd" ]; then
+  [ "$cmd" = "$LEGACY_BOOTCMD" ] && [ "$def" = 8 ] && [ "$delay" = 0 ] || return 1
+  MIGRATE=1
+ else
+  [ -z "$def" ] && [ -z "$delay" ] || return 1
+ fi
+ case "$pre" in '') ;; "$LEGACY_PREBOOT") MIGRATE=1 ;; *) return 1 ;; esac
+ case "$menu" in '') ;; "$LEGACY_MENU") MIGRATE=1 ;; *) return 1 ;; esac
+}
+
+backup_environment() {
+ local dir=${BACKUP%/*}
+ [ ! -L "$dir" ] && [ ! -L "$BACKUP" ] || return 1
+ mkdir -p "$dir" && chmod 700 "$dir" || return 1
+ if [ -e "$BACKUP" ]; then
+  [ -f "$BACKUP" ] && [ "$(wc -c < "$BACKUP")" -eq "$ENV_SIZE" ] || return 1
+  return 0
+ fi
+ (umask 077; dd if="$ENV_MTD" of="$WORK/backup" bs=65536 count=1 2>/dev/null) || return 1
+ [ "$(wc -c < "$WORK/backup")" -eq "$ENV_SIZE" ] || return 1
+ # Keep a persistent backup before the first Flash write; never overwrite it.
+ cp "$WORK/backup" "$dir/.boot-env-backup.tmp" && chmod 600 "$dir/.boot-env-backup.tmp" &&
+  mv "$dir/.boot-env-backup.tmp" "$BACKUP" || return 1
+ sync
+}
+
+status() {
+ if ! prepare; then result 0 0 '无法校验板载 Flash 启动环境，未执行写入。'; return; fi
+ if ! check_commands; then result 0 0 '检测到自定义启动命令，请先核实，避免覆盖现有配置。'; return; fi
+ if [ "$WRITABLE" -eq 0 ]; then result 0 0 '启动环境区为只读，无法保存优先级。'; return; fi
+ if [ "$MIGRATE" -eq 1 ]; then
+  result 1 0 '存在旧版一次性启动标记，保存优先级时会清理。'
+ else result 1 0 '当前设置已从 Flash 启动环境读取。保存后在下次重启生效。'; fi
+}
+
+set_priority() {
+ local want old
+ case "$1" in sd) want=1 ;; flash) want=0 ;; *) result 0 0 '无效的启动优先级。'; return 1 ;; esac
+ if ! prepare || ! check_commands || [ "$WRITABLE" -eq 0 ]; then
+  result 0 0 '启动环境校验失败、只读或存在自定义命令，未执行写入。'; return 1
+ fi
+ if [ "$CURRENT" = "$want" ] && [ "$MIGRATE" -eq 0 ]; then
+  result 1 1 '已经是所选优先级，无需重复写入。'; return 0
+ fi
+ if ! backup_environment; then result 0 0 '启动环境备份失败，未执行写入。'; return 1; fi
+ old=$CURRENT
+ printf 'boot_from_sd %s\n' "$want" > "$WORK/batch"
+ if [ "$MIGRATE" -eq 1 ]; then
+  printf '%s\n' bootcmd bootmenu_default bootmenu_delay preboot bootmenu_0 >> "$WORK/batch"
+ fi
+ if ! fw_setenv -c "$WORK/fw_env.config" -s "$WORK/batch" >/dev/null 2>&1; then
+  result 0 0 '写入失败，请勿重启，需检查启动环境。'; return 1
+ fi
+ CURRENT="$(env_get boot_from_sd)" || CURRENT=
+ if ! fw_printenv -c "$WORK/fw_env.config" > "$WORK/after" 2>/dev/null || [ "$CURRENT" != "$want" ] || ! check_commands || [ "$MIGRATE" -ne 0 ]; then
+  result 0 0 '回读校验失败，请勿重启，需检查启动环境。'; return 1
+ fi
+ # Apart from preference and exact known legacy markers, preserve every value.
+ sed '/^boot_from_sd=/d; /^bootcmd=/d; /^bootmenu_default=/d; /^bootmenu_delay=/d; /^preboot=/d; /^bootmenu_0=/d' "$WORK/before" | LC_ALL=C sort > "$WORK/expected"
+ sed '/^boot_from_sd=/d; /^bootcmd=/d; /^bootmenu_default=/d; /^bootmenu_delay=/d; /^preboot=/d; /^bootmenu_0=/d' "$WORK/after" | LC_ALL=C sort > "$WORK/actual"
+ if ! cmp -s "$WORK/expected" "$WORK/actual"; then
+  result 0 0 '其他环境变量发生变化，请勿重启，需检查启动环境。'; return 1
+ fi
+ sync
+ result 1 1 '启动优先级已保存并回读确认，下次重启生效。'
+}
+
+case "${1:-status}" in
+ status|get) status ;;
+ set)
+  exec 9>/var/lock/c2000max-boot-env.lock
+  flock -n 9 || { result 0 0 '启动环境正在更新，请稍后重试。'; exit 1; }
+  set_priority "$2"
+  ;;
+ *) result 0 0 '仅支持读取或设置 SD / Flash 优先级。'; exit 2 ;;
+esac

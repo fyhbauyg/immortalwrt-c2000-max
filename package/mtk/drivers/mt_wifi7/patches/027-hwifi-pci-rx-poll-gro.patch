@@ -1,0 +1,45 @@
+--- a/wlan_hwifi/bus/mtk_pci_dma.c
++++ b/wlan_hwifi/bus/mtk_pci_dma.c
+@@ -38,6 +38,9 @@
+ #include "bus.h"
+ #include "mtk_pci_dma.h"
+ #include "mtk_rro.h"
++#ifdef C2000MAX_RX_GRO_OSAL
++#include <os/mt_osal_rx_gro.h>
++#endif
+ 
+ 
+ static u32
+@@ -1753,6 +1756,10 @@ pci_dma_rx_poll(struct napi_struct *napi, int budget)
+ 	struct pci_irq_vector_data *vec_data;
+ 	int done = 0, cur;
+ 	struct pci_rx_queue *rq;
++#ifdef C2000MAX_RX_GRO_OSAL
++	struct mt_os_rx_gro_scope gro_scope;
++	bool gro_active;
++#endif
+ 
+ 	trans = container_of(napi->dev, struct pci_trans, napi_dev);
+ 	q = container_of(napi, struct pci_queue, napi);
+@@ -1763,6 +1770,11 @@ pci_dma_rx_poll(struct napi_struct *napi, int budget)
+ 	q->tail = bus_get_field(to_bus_trans(trans),
+ 			q->hw_didx_addr, q->hw_didx_mask);
+ 
++	/* The fast BMAC RX path delivers skbs inside q_ops->process(), before
++	 * mtk_bus_rx_poll(). Keep this scope within the active NAPI poll. */
++#ifdef C2000MAX_RX_GRO_OSAL
++	gro_active = mt_os_rx_gro_begin(&gro_scope, napi);
++#endif
+ 	mt_rcu_read_lock();
+ 
+ 	do {
+@@ -1773,5 +1785,9 @@ pci_dma_rx_poll(struct napi_struct *napi, int budget)
+ 	} while (cur && done < budget);
+ 
+ 	mt_rcu_read_unlock();
++#ifdef C2000MAX_RX_GRO_OSAL
++	if (gro_active)
++		mt_os_rx_gro_end(&gro_scope);
++#endif
+ 
+ 	if (done < budget) {

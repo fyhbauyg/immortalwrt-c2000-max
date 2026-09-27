@@ -1,0 +1,34 @@
+--- a/wlan_hwifi/interface/connac_if.c
++++ b/wlan_hwifi/interface/connac_if.c
+@@ -38,6 +38,9 @@
+ #include "mac_if.h"
+ #include "bus.h"
+ #include <wlan_tr.h>
++#ifdef C2000MAX_RX_GRO_OSAL
++#include <os/mt_osal_rx_gro.h>
++#endif
+ 
+ #define TOKEN_NUM_FOR_SCHEULE_DEQ 10
+ 
+@@ -103,6 +106,10 @@
+ 	struct sk_buff *skb;
+ 	struct mtk_rx_blk *rx_blk;
+ 	int ret;
++#ifdef C2000MAX_RX_GRO_OSAL
++ struct mt_os_rx_gro_scope gro_scope;
++ bool gro_active = mt_os_rx_gro_begin(&gro_scope, napi);
++#endif
+ 
+ 	while ((skb = __skb_dequeue(rx_frames)) != NULL) {
+ 
+@@ -119,6 +126,10 @@
+ free:
+ 		dev_kfree_skb(skb);
+ 	}
++#ifdef C2000MAX_RX_GRO_OSAL
++ if (gro_active)
++  mt_os_rx_gro_end(&gro_scope);
++#endif
+ 	return 0;
+ }
+ 

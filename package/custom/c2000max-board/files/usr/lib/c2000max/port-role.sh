@@ -160,6 +160,12 @@ c2000_effective_fastpath()
 {
 	local role="$1" requested="${2:-disabled}"
 
+	# Keep saved TurboACC settings, but route packets through the active accelerator.
+	if [ -f /var/run/c2000max-leigod-active ]; then
+		printf '%s\n' disabled
+		return 0
+	fi
+
 	# SQM must see every packet. Retain the saved acceleration preference,
 	# but suspend both PPE and software flowtables until SQM is disabled.
 	if command -v c2000_sqm_enabled >/dev/null 2>&1 && c2000_sqm_enabled; then

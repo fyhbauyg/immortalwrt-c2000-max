@@ -1,0 +1,94 @@
+--- a/mt_osal_packet.c
++++ b/mt_osal_packet.c
+@@ -34,6 +34,8 @@
+ #include <mt_osal_packet.h>
+ #include <mt_osal_net.h>
+ #include <mt_osal_module.h>
++#include <mt_osal_rx_gro.h>
++#include <linux/percpu.h>
+ 
+ 
+ static inline unsigned int mt_os_net_pkt_csum_add(
+@@ -408,10 +410,63 @@
+ }
+ EXPORT_SYMBOL(mt_os_pkt_clear_info);
+ 
++
++/* Opt-in until hardware A/B and forwarding validation are complete. */
++static bool rx_gro;
++module_param(rx_gro, bool, 0644);
++MODULE_PARM_DESC(rx_gro, "Batch synchronous HWIFI RX delivery through NAPI GRO");
++static DEFINE_PER_CPU(struct mt_os_rx_gro_scope *, mt_os_rx_scope);
++
++bool mt_os_rx_gro_begin(struct mt_os_rx_gro_scope *scope,
++                      struct napi_struct *napi)
++{
++ if (!READ_ONCE(rx_gro) || !napi || !in_serving_softirq() ||
++     in_hardirq() || in_nmi())
++  return false;
++ /* Pin the stack-owned scope even on preemptible configurations. */
++ preempt_disable();
++ __skb_queue_head_init(&scope->frames);
++ scope->napi = napi;
++ scope->previous = this_cpu_read(mt_os_rx_scope);
++ this_cpu_write(mt_os_rx_scope, scope);
++ return true;
++}
++EXPORT_SYMBOL(mt_os_rx_gro_begin);
++
++void mt_os_rx_gro_end(struct mt_os_rx_gro_scope *scope)
++{
++ struct sk_buff *skb;
++
++ /* Protocol callbacks must not enqueue back into the draining scope. */
++ this_cpu_write(mt_os_rx_scope, NULL);
++ while ((skb = __skb_dequeue(&scope->frames)) != NULL)
++  napi_gro_receive(scope->napi, skb);
++ this_cpu_write(mt_os_rx_scope, scope->previous);
++ preempt_enable();
++}
++EXPORT_SYMBOL(mt_os_rx_gro_end);
++
+ void mt_os_pkt_send(void *skb_, void *napi, int *pSend)
+ {
+ 	struct sk_buff *skb = (struct sk_buff *)skb_;
+ 	int send;
++ struct mt_os_rx_gro_scope *scope = NULL;
++
++ /* Only synchronous delivery inside the pinned RX scope is eligible.
++  * Deferred reorder/timer delivery and hard IRQ callbacks keep fallback.
++  */
++ if (in_serving_softirq() && !in_hardirq() && !in_nmi()) {
++  preempt_disable();
++  scope = this_cpu_read(mt_os_rx_scope);
++  if (scope)
++   __skb_queue_tail(&scope->frames, skb);
++  preempt_enable();
++  if (scope) {
++   if (pSend)
++    *pSend = 0;
++   return;
++  }
++ }
+ 
+ 	if (napi && in_serving_softirq()) {
+ 		napi_gro_receive((struct napi_struct *)napi, skb);
+--- a/inc/mt_osal_rx_gro.h
++++ b/inc/mt_osal_rx_gro.h
+@@ -0,0 +1,16 @@
++/* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
++#ifndef MT_OSAL_RX_GRO_H
++#define MT_OSAL_RX_GRO_H
++#include <linux/netdevice.h>
++#include <linux/skbuff.h>
++
++/* Stack lifetime: begin/end must surround one synchronous RX batch. */
++struct mt_os_rx_gro_scope {
++ struct sk_buff_head frames;
++ struct napi_struct *napi;
++ struct mt_os_rx_gro_scope *previous;
++};
++bool mt_os_rx_gro_begin(struct mt_os_rx_gro_scope *scope,
++                      struct napi_struct *napi);
++void mt_os_rx_gro_end(struct mt_os_rx_gro_scope *scope);
++#endif

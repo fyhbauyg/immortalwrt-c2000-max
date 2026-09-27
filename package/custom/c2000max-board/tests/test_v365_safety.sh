@@ -38,19 +38,6 @@ SQM=1
 SQM=0
 [[ "$(c2000_effective_fastpath wan mediatek_hnat)" == flow_offloading ]]
 [[ "$(c2000_effective_fastpath lan mediatek_hnat)" == mediatek_hnat ]]
-# Parse every exposed flash partition, not just one label.
-awk '
- /partition@[0-9a-f]+ \{/ { inside=1; ro=0; count++ }
- inside && /read-only;/ { ro=1 }
- inside && /};/ { if(!ro) exit 1; inside=0 }
- END { if(count!=5) exit 1 }
-' "$TOP/target/linux/mediatek/dts/mt7987a-nradio-c2000-max.dts"
-# Extract and execute the entry functions with destructive primitives mocked.
-helper="$ROOT/files/usr/sbin/c2000max-boot-official-once"
-source <(sed -n '/^status_json() {/,/^}/p; /^arm_once() {/,/^}/p' "$helper")
-json_result() { [[ "$1:$2" == 0:0 ]]; }
-make_env_config() { echo 'ERROR: entered SPI path' >&2; return 99; }
-status_json
-if arm_once 1; then echo 'unsafe reboot was accepted'; exit 1; fi
+# Flash policy and mock transactions are covered by test_official_boot_once.sh.
 for script in "$ROOT/files/usr/sbin/c2000max-netcheck" "$ROOT/files/usr/sbin/c2000max-sqm-prepare"; do sh -n "$script"; done
 echo 'v36.5 overlap, SQM mutual exclusion, restoration and SPI safety tests passed'

@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
-PKG_VERSION:=2.37.1
-PKG_RELEASE:=7
+PKG_VERSION:=2.37.5
+PKG_RELEASE:=3
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -88,6 +88,9 @@ define Package/c2000max-board/install
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-daed-cleanup $(1)/usr/sbin/c2000max-daed-cleanup
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-daed-hybrid $(1)/usr/sbin/c2000max-daed-hybrid
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-boot-official-once $(1)/usr/sbin/c2000max-boot-official-once
+	$(INSTALL_BIN) ./files/usr/sbin/c2000max-boot-priority $(1)/usr/sbin/c2000max-boot-priority
+	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
+	$(INSTALL_DATA) ./files/lib/upgrade/keep.d/c2000max-boot-priority $(1)/lib/upgrade/keep.d/c2000max-boot-priority
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-factory $(1)/usr/sbin/c2000max-factory
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-mlo-interlock $(1)/usr/sbin/c2000max-mlo-interlock
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-owe-transition $(1)/usr/sbin/c2000max-owe-transition

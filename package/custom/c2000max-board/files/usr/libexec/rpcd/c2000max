@@ -20,8 +20,8 @@ case "$1" in
 	},
 	"access_status": {},
 	"access_apply": {},
-	"official_boot_status": {},
-	"official_boot_once": {},
+	"boot_priority_status": {},
+	"boot_priority_set": { "priority": "string" },
 	"port_status": {},
 	"port_switch": {
 		"role": "string",
@@ -102,11 +102,12 @@ EOF
 			access_apply)
 				exec /usr/sbin/c2000max-access apply
 				;;
-			official_boot_status)
-				exec /usr/sbin/c2000max-boot-official-once status-json
+			boot_priority_status)
+				exec /usr/sbin/c2000max-boot-priority status
 				;;
-			official_boot_once)
-				exec /usr/sbin/c2000max-boot-official-once arm-reboot
+			boot_priority_set)
+				priority="$(jsonfilter -s "$input" -e '@.priority')"
+				exec /usr/sbin/c2000max-boot-priority set "$priority"
 				;;
 			port_status)
 				exec /usr/sbin/c2000max-port-role status

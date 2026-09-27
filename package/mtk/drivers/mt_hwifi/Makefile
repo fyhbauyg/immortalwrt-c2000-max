@@ -437,7 +437,7 @@ define Build/Compile
 		M="$(PKG_BUILD_DIR)/wlan_hwifi" \
 		LINUX_DIR="$(KERNEL_BUILD_DIR)" \
 		$(MTK_HWIFI_C_FLAGS) \
-	 	KCFLAGS="$(KCFLAGS)" \
+		KCFLAGS="$(KCFLAGS) $(if $(CONFIG_MTK_WIFI7_OSAL_SUPPORT),-DC2000MAX_RX_GRO_OSAL)" \
 		KBUILD_EXTRA_SYMBOLS="$(wildcard $(PKG_SYMVERS_DIR)/*.symvers)" \
 		MTK_WED="$(KERNEL_BUILD_DIR)/warp" \
 		modules

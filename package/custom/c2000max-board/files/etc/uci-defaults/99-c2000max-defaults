@@ -278,19 +278,14 @@ c2000_list_has "$fullcone_protocols" udp ||
 	uci -q add_list "firewall.${wan_zone}.fullcone_proto=udp"
 
 uci -q set luci.main.lang='zh_cn'
-case "$(uci -q get luci.main.mediaurlbase)" in
-	/luci-static/argon|/luci-static/design) ;;
-	*)
-		uci -q set luci.main.mediaurlbase='/luci-static/argon'
-		;;
-esac
+# V37.5 Beta ships C2000MAX UI as the default, including preserved upgrades.
+uci -q set luci.main.mediaurlbase='/luci-static/c2000max-ui'
 uci -q set argon.@global[0].online_wallpaper='bing'
 uci -q set argon.@global[0].primary='#168ab0'
 uci -q set argon.@global[0].dark_primary='#168ab0'
 
 # V35.16 retires the optional iStoreX/Quickstart integration.  Remove only
-# their preserved configuration and startup hooks. Argon remains the default,
-# while a user-selected Design theme and unrelated settings stay untouched.
+# their preserved configuration and startup hooks. C2000MAX UI is the release default; unrelated settings stay untouched.
 [ ! -x /etc/init.d/quickstart ] || \
 	/etc/init.d/quickstart stop >/dev/null 2>&1 || true
 [ ! -x /etc/init.d/quickstart ] || \
