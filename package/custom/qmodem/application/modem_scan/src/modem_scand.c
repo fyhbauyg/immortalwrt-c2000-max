@@ -23,6 +23,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef QMODEM_USB_SYSFS
+#define QMODEM_USB_SYSFS "/sys/bus/usb/devices"
+#endif
+
 #define QMODEM_AT_QUEUE_TIMEOUT 90
 #define C2000_ROLE_LOCK "/var/lock/c2000max-port-role.lock"
 #define C2000_SWITCHING "/var/run/c2000max-port-role.switching"
@@ -601,10 +605,10 @@ static void scan_usb_slot(const char *slot, struct scan_result *res)
 	DIR *d;
 	struct dirent *de;
 
-	snprintf(slot_path, sizeof(slot_path), "/sys/bus/usb/devices/%s", slot);
+	snprintf(slot_path, sizeof(slot_path), "%s/%s", QMODEM_USB_SYSFS, slot);
 	if (!is_dir(slot_path))
 		return;
-	snprintf(res->modem_path, sizeof(res->modem_path), "/sys/bus/usb/devices/%s/", slot);
+	snprintf(res->modem_path, sizeof(res->modem_path), "%s/%s/", QMODEM_USB_SYSFS, slot);
 	snprintf(vid_path, sizeof(vid_path), "%s/idVendor", slot_path);
 	snprintf(pid_path, sizeof(pid_path), "%s/idProduct", slot_path);
 	read_file_trim(vid_path, res->vid, sizeof(res->vid));
@@ -630,10 +634,6 @@ static void scan_usb_slot(const char *slot, struct scan_result *res)
 		suffix = strrchr(de->d_name, ':');
 		if (suffix)
 			snprintf(if_port, sizeof(if_port), "%s", suffix + 1);
-		if (!interface_allowed(&rule, if_port)) {
-			log_msg(LOG_L_DEBUG, "skip usb %s interface %s by modem_port_rule", slot, if_port);
-			continue;
-		}
 		snprintf(driver_path, sizeof(driver_path), "%s/%s/driver", slot_path, de->d_name);
 		if (!path_exists(driver_path) || readlink_basename(driver_path, driver, sizeof(driver)) < 0)
 			continue;
@@ -642,6 +642,12 @@ static void scan_usb_slot(const char *slot, struct scan_result *res)
 		if (!strcmp(driver, "option") || !strcmp(driver, "cdc_acm") ||
 		    !strcmp(driver, "qcserial") || !strcmp(driver, "usbserial_generic") ||
 		    !strcmp(driver, "usbserial")) {
+			/* include restricts AT probing, not the modem's data interfaces.
+			 * The SRM825 rule selects 1.1, but its ECM network device is on 1.5. */
+			if (!interface_allowed(&rule, if_port)) {
+				log_msg(LOG_L_DEBUG, "skip usb %s AT interface %s by modem_port_rule", slot, if_port);
+				continue;
+			}
 			struct str_list ttys;
 			sl_init(&ttys);
 			list_child_matching(path, "ttyUSB", &ttys);

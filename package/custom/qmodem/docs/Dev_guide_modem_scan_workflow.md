@@ -19,3 +19,7 @@
 设备经过扫描流程后，会将 devpath 和 slot_type 传入添加流程
 设备添加时会向设备发送 ```ATI``` 命令，如果包含返回 ```OK``` 字符串的则认为该端口可用，标记为可用端口后加入列表
 检查完所有端口后
+
+## USB interface include rules
+
+`modem_port_rule.usb[VID:PID].include` restricts serial interfaces considered for AT probing. It must not exclude data interfaces bound to ECM, RNDIS, QMI, MBIM or NCM drivers. For example, SRM825 2dee:4d23 exposes AT on 1.1 and ECM usb0 on 1.5; both are required before profile detection.

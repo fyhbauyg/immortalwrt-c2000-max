@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 include ../../version.mk
 
 PKG_NAME:=modem_scan
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_VERSION:=$(QMODEM_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
