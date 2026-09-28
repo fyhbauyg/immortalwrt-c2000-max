@@ -12,11 +12,11 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#111111">
 <title>C2000MAX · 登录</title>
-<script src="{{ media }}/theme.js?v=1.0.10-r1"></script>
-<link rel="stylesheet" href="{{ media }}/tokens.css?v=1.0.10-r1">
-<link rel="stylesheet" href="{{ media }}/components.css?v=1.0.10-r1">
-<link rel="stylesheet" href="{{ media }}/login.css?v=1.0.10-r1">
-<script src="{{ media }}/login.js?v=1.0.10-r1" defer></script>
+<script src="{{ media }}/theme.js?v=1.0.11-r1"></script>
+<link rel="stylesheet" href="{{ media }}/tokens.css?v=1.0.11-r1">
+<link rel="stylesheet" href="{{ media }}/components.css?v=1.0.11-r1">
+<link rel="stylesheet" href="{{ media }}/login.css?v=1.0.11-r1">
+<script src="{{ media }}/login.js?v=1.0.11-r1" defer></script>
 </head>
 <body class="login-page">
 <img class="login-wallpaper" src="{{ media }}/wallpaper/default.jpg" data-fallback="{{ media }}/wallpaper/default.jpg" data-date="{{ entityencode(wallpaper.date ?? '', true) }}" alt="" aria-hidden="true">

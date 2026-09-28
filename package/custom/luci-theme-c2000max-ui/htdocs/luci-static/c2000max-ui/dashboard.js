@@ -7,19 +7,54 @@ function mount(root, url) {
  const art=$('.device-art');
  if(art) {
   const original=new URL(art.getAttribute('src'),document.baseURI).href;
-  const alternate=new URL('c2000-788.png',original).href;
-  const key='c2000max-device-art';
-  let selected='max';
-  try { if(localStorage.getItem(key)==='788')selected='788'; } catch {}
+  const skins=[
+   {id:'max',file:null,name:'经典银白',wish:'愿每一次连接，都有好消息。',symbol:'✦'},
+   {id:'788',file:'c2000-788.png',name:'马年限定',wish:'马到成功，好运满格。',symbol:'✦'},
+   {id:'mid-autumn',file:'c2000max-mid-autumn.png',name:'中秋限定',wish:'月圆人团圆，远方也在身边。',symbol:'☾'},
+   {id:'national-day',file:'c2000max-national-day.png',name:'国庆限定',wish:'山河锦绣，沿途皆是好风景。',symbol:'✦'}
+  ];
+  const key='c2000max-device-art',decorKey='c2000max-decorations';
+  let selected='max',decorations=true,clearWish;
+  try {
+   const saved=localStorage.getItem(key);if(skins.some(s=>s.id===saved))selected=saved;
+   decorations=localStorage.getItem(decorKey)!=='off';
+  } catch {}
+  const scene=art.closest('.device-scene');
+  const controls=document.createElement('div');controls.className='device-extras';
+  const skinButton=document.createElement('button'),decorButton=document.createElement('button');
+  skinButton.type=decorButton.type='button';skinButton.className='skin-switch';decorButton.className='decor-switch';
+  skinButton.title='切换设备皮肤；双击设备也可以切换';
+  const wish=document.createElement('span');wish.className='device-wish';wish.setAttribute('role','status');
+  const sparkles=document.createElement('span');sparkles.className='device-sparkles';sparkles.setAttribute('aria-hidden','true');
+  for(let n=0;n<5;n++){const star=document.createElement('i');star.textContent='✦';star.style.setProperty('--n',n);sparkles.append(star);}
+  controls.append(skinButton,decorButton);scene.append(controls,wish,sparkles);
+  function updateDecorations(){
+   scene.classList.toggle('decorations-off',!decorations);
+   decorButton.textContent=decorations?'装饰：开':'装饰：关';
+   decorButton.setAttribute('aria-pressed',String(decorations));
+   if(!decorations){wish.textContent='';scene.classList.remove('celebrating');}
+  }
+  function celebrate(){
+   if(!decorations)return;
+   clearTimeout(clearWish);const skin=skins.find(s=>s.id===selected);
+   wish.textContent=skin.wish;scene.classList.remove('celebrating');void scene.offsetWidth;scene.classList.add('celebrating');
+   clearWish=setTimeout(()=>{scene.classList.remove('celebrating');wish.textContent='';},2400);
+  }
   function showArt() {
-   art.src=selected==='788'?alternate:original;
-   art.alt=selected==='788'?'NRadio C2000-788':'NRadio C2000MAX';
+   const skin=skins.find(s=>s.id===selected);
+   art.src=skin.file?new URL(skin.file,original).href:original;
+   art.alt='NRadio C2000MAX · '+skin.name;scene.dataset.skin=selected;
    art.setAttribute('aria-label',art.alt+'；双击切换外观，键盘按 Enter 或空格切换');
+   skinButton.textContent=skin.symbol+' '+skin.name;skinButton.setAttribute('aria-label','当前皮肤：'+skin.name+'，点击切换');
   }
   function switchArt() {
-   selected=selected==='max'?'788':'max';showArt();
+   selected=skins[(skins.findIndex(s=>s.id===selected)+1)%skins.length].id;showArt();celebrate();
    try { localStorage.setItem(key,selected); } catch {}
   }
+  skinButton.addEventListener('click',switchArt);
+  decorButton.addEventListener('click',()=>{decorations=!decorations;updateDecorations();try{localStorage.setItem(decorKey,decorations?'on':'off');}catch{}});
+  art.addEventListener('click',celebrate);
+  updateDecorations();
   art.setAttribute('role','button');art.tabIndex=0;art.draggable=false;
   art.title='双击切换设备外观';
   // Touch browsers dispatch dblclick too: suppress it after handling a double tap.
