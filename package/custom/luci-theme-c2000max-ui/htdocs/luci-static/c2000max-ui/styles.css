@@ -101,8 +101,21 @@ dialog::backdrop { background: var(--overlay); backdrop-filter: blur(6px); }
   dialog { padding: 22px; }
 }
 
-:root:not([data-skin="max"])[data-skin] .brand::after { content:''; position:absolute; right:-22px; top:-17px; width:36px; height:36px; background:var(--mascot) center/contain no-repeat; pointer-events:none; }
-:root[data-skin="788"] .brand::after { content:'🐴'; background:none; font-size:28px; }
-.theme-toggle .theme-mascot { width:32px; height:32px; object-fit:contain; }
-:root:not([data-skin="max"])[data-skin] .theme-picker .theme-control { border-color:var(--accent); background:var(--surface-soft); }
-@media(min-width:701px) { :root:not([data-skin="max"])[data-skin] .theme-picker .theme-control::before { content:''; width:30px; height:30px; background:var(--mascot) center/contain no-repeat; pointer-events:none; } }
+/* Headpieces rest on MAX; decorative layers never intercept taps. */
+.brand-max { position:relative; display:inline-block; }
+:root:not([data-skin="max"])[data-skin] .brand-max::after { content:''; position:absolute; right:-10px; bottom:calc(100% - 9px); width:32px; height:28px; background:url('assets/headpiece-lion.png') center/contain no-repeat; transform:rotate(12deg); pointer-events:none; }
+:root[data-skin="mid-autumn"][data-skin] .brand-max::after { width:38px; height:28px; right:-10px; bottom:calc(100% - 8px); background-image:url('assets/headpiece-rabbit.png'); transform:rotate(8deg); }
+:root:not([data-skin="max"])[data-skin] .brand-max::before { content:'✦'; position:absolute; right:-18px; top:9px; color:var(--accent); font-size:10px; line-height:1; pointer-events:none; }
+/* Keep the familiar appearance icon; festival artwork belongs inside the menu. */
+.topbar .theme-picker .theme-toggle { display:grid; }
+.topbar .theme-picker > .theme-control { display:none; position:absolute; top:calc(100% + 10px); right:0; z-index:8; width:248px; max-width:calc(100vw - 32px); padding:10px; gap:6px; grid-template-columns:repeat(3,minmax(0,1fr)); background:var(--surface-raised); border:1px solid var(--border); border-radius:16px; box-shadow:0 8px 24px #0002; }
+.topbar .theme-picker .theme-toggle[aria-expanded="true"] + .theme-control { display:grid; }
+.topbar .theme-picker .theme-control > button { width:100%; min-width:0; height:auto; min-height:54px; padding:8px 2px; display:flex; flex-direction:column; gap:4px; border-radius:10px; }
+.topbar .theme-picker .theme-choice-label { display:block; font-size:11px; white-space:nowrap; }
+.theme-festival { grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:4px 4px 12px; margin-bottom:2px; border-bottom:1px solid var(--border); }
+.theme-festival[hidden] { display:none; }
+.theme-festival img { width:42px; height:42px; object-fit:contain; }
+.theme-festival span { display:flex; flex-direction:column; gap:3px; }
+.theme-festival strong { color:var(--accent); font-size:14px; }
+.theme-festival small { color:var(--text-muted); font-size:11px; }
+@media(max-width:700px) { .topbar .theme-picker > .theme-control { top:76px; right:0; } }

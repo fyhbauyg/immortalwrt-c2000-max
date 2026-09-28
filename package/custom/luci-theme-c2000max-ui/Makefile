@@ -5,7 +5,7 @@ LUCI_DEPENDS:=+luci-base +luci-theme-bootstrap +rpcd-mod-luci +uclient-fetch +ca
 LUCI_MINIFY_CSS:=0
 LUCI_MINIFY_JS:=0
 PKG_LICENSE:=Apache-2.0
-PKG_VERSION:=1.0.12
+PKG_VERSION:=1.0.13
 PKG_RELEASE:=1
 
 # Normalize a checkout copied from Windows before LuCI packages its files.

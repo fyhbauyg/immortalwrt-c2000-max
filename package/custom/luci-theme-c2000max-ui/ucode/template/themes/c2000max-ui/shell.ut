@@ -1,5 +1,5 @@
   <button class="header-menu icon-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false" aria-label="打开完整菜单"><svg class="icon"><use href="#menu"/></svg></button>
-  <a class="brand" href="{{ dispatcher.build_url('admin/status/c2000max') }}" aria-label="C2000MAX 首页"><span>C2000MAX</span><small>NRadio C2000-788</small></a>
+  <a class="brand" href="{{ dispatcher.build_url('admin/status/c2000max') }}" aria-label="C2000MAX 首页"><span>C2000<span class="brand-max">MAX</span></span><small>NRadio C2000-788</small></a>
   <div class="sidebar-backdrop" hidden></div>
   <aside class="sidebar" id="sidebar" aria-label="OpenWrt 完整菜单">
     <div class="sidebar-heading"><div><strong>C2000MAX</strong><small>ImmortalWrt 控制台</small></div><button class="icon-button" id="close-menu" aria-label="关闭菜单"><svg class="icon"><use href="#close"/></svg></button></div>
@@ -16,6 +16,7 @@
   <line x1="8" x2="16" y1="21" y2="21" />
   <line x1="12" x2="12" y1="17" y2="21" /></svg></button>
       <div class="theme-control" id="theme-options" role="group" aria-label="外观模式">
+        <div class="theme-festival" hidden><img alt="" width="42" height="42"><span><strong></strong><small></small></span></div>
         <button type="button" data-theme-choice="light" aria-pressed="false" aria-label="浅色模式" title="浅色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4" />
   <path d="M12 2v2" />
   <path d="M12 20v2" />
