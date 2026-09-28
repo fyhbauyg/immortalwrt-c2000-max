@@ -5,19 +5,27 @@
   const system = matchMedia('(prefers-color-scheme: dark)');
   const compact = matchMedia('(max-width: 700px)');
   const choices = ['system', 'light', 'dark'];
+  const skinKey='c2000max-device-art',skinNames={max:'经典银白','788':'马年限定','mid-autumn':'中秋限定','national-day':'国庆限定'};
+  let skin='max';
+  try { const saved=localStorage.getItem(skinKey);if(skinNames[saved])skin=saved; } catch {}
   let preference = 'system';
   try { const saved = localStorage.getItem(key); if (choices.includes(saved)) preference = saved; } catch {}
   function apply() {
     const resolved = preference === 'system' ? (system.matches ? 'dark' : 'light') : preference;
     document.documentElement.dataset.theme = resolved;
+    document.documentElement.dataset.skin = skin;
     document.documentElement.dataset.appearance = preference;
     document.querySelectorAll('[data-theme-choice]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.themeChoice === preference)));
     document.querySelectorAll('[data-theme-toggle]').forEach(toggle => {
       const selected = toggle.parentElement.querySelector('[data-theme-choice="' + preference + '"]');
+      if(!selected)return;
       const name = selected.getAttribute('aria-label');
       toggle.replaceChildren(selected.querySelector('svg').cloneNode(true));
-      toggle.setAttribute('aria-label', '外观模式：' + name);
-      toggle.title = '外观模式：' + name;
+      if(skin==='mid-autumn'||skin==='national-day'){
+       const image=document.createElement('img');image.src=(window.L?.env?.media||'/luci-static/c2000max-ui')+'/assets/mascot-'+(skin==='mid-autumn'?'rabbit':'lion')+'.png';image.alt='';image.className='theme-mascot';toggle.replaceChildren(image);
+      }
+      toggle.setAttribute('aria-label', skinNames[skin]+' · 外观模式：' + name);
+      toggle.title = skinNames[skin]+' · 外观模式：' + name;
     });
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#111111' : '#eef3f8');
   }
@@ -26,6 +34,11 @@
     preference = value;
     try { localStorage.setItem(key, value); } catch {}
     apply();
+  }
+  function setSkin(value) {
+    if(!skinNames[value])return;
+    skin=value;try{localStorage.setItem(skinKey,value);}catch{}
+    apply();document.dispatchEvent(new CustomEvent('c2000-skin-change',{detail:skin}));
   }
   function closePickers(restoreFocus = false) {
     document.querySelectorAll('[data-theme-toggle][aria-expanded="true"]').forEach(toggle => {
@@ -36,6 +49,7 @@
   apply();
   system.addEventListener('change', apply);
   window.addEventListener('storage', event => {
+    if(event.key===skinKey){skin=skinNames[event.newValue]?event.newValue:'max';apply();document.dispatchEvent(new CustomEvent('c2000-skin-change',{detail:skin}));}
     if (event.key === key || event.key === null) { preference = choices.includes(event.newValue) ? event.newValue : 'system'; apply(); }
   });
   document.addEventListener('DOMContentLoaded', apply);
@@ -63,5 +77,5 @@
     closePickers();
     if (!compact.matches && toggleFocused) document.querySelector('[data-theme-choice][aria-pressed="true"]')?.focus();
   });
-  window.C2000Theme = Object.freeze({ set, get: () => preference });
+  window.C2000Theme = Object.freeze({ set, get: () => preference, setSkin, getSkin:()=>skin });
 })();

@@ -100,3 +100,9 @@ dialog::backdrop { background: var(--overlay); backdrop-filter: blur(6px); }
   .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
   dialog { padding: 22px; }
 }
+
+:root:not([data-skin="max"])[data-skin] .brand::after { content:''; position:absolute; right:-22px; top:-17px; width:36px; height:36px; background:var(--mascot) center/contain no-repeat; pointer-events:none; }
+:root[data-skin="788"] .brand::after { content:'🐴'; background:none; font-size:28px; }
+.theme-toggle .theme-mascot { width:32px; height:32px; object-fit:contain; }
+:root:not([data-skin="max"])[data-skin] .theme-picker .theme-control { border-color:var(--accent); background:var(--surface-soft); }
+@media(min-width:701px) { :root:not([data-skin="max"])[data-skin] .theme-picker .theme-control::before { content:''; width:30px; height:30px; background:var(--mascot) center/contain no-repeat; pointer-events:none; } }

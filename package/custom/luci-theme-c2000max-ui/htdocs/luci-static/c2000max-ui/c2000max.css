@@ -139,13 +139,9 @@ body.disconnected .operator-logo { opacity: .5; }
 .device-art[role="button"]:focus-visible { outline:2px solid var(--accent, #2563eb); outline-offset:4px; border-radius:24px; }
 
 /* Small, opt-out festivities stay inside the device illustration. */
-.device-extras { position:relative; z-index:3; display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-top:12px; }
-.device-extras button { font:inherit; font-size:12px; line-height:1.5; padding:5px 10px; min-height:32px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text-secondary); cursor:pointer; box-shadow:none; }
-.device-extras button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .device-scene[data-skin="mid-autumn"] { --festive:#ba882d; }
 .device-scene[data-skin="national-day"] { --festive:#da6552; }
 .device-scene { --festive:var(--accent); }
-.device-scene:not(.decorations-off) .skin-switch { border-color:var(--festive); }
 .device-wish { position:absolute; z-index:4; top:10%; left:4%; right:4%; text-align:center; font-size:12px; line-height:1.6; color:var(--text); pointer-events:none; }
 .device-wish:not(:empty) { padding:8px 12px; border:1px solid var(--border); background:var(--surface); border-radius:12px; box-shadow:0 6px 20px #0001; }
 .device-sparkles { position:absolute; inset:8% 3% 28%; pointer-events:none; z-index:3; overflow:hidden; }
@@ -153,3 +149,12 @@ body.disconnected .operator-logo { opacity: .5; }
 .celebrating:not(.decorations-off) .device-sparkles i { display:block; animation:device-sparkle 850ms ease-out both; animation-delay:calc(var(--n)*45ms); }
 @keyframes device-sparkle { from { opacity:0; transform:translateY(16px) scale(.6); } 35% { opacity:.85; } to { opacity:0; transform:translateY(-32px) scale(1.1); } }
 @media (prefers-reduced-motion:reduce) { .celebrating .device-sparkles i { display:none!important; animation:none; } }
+
+:root:not([data-skin="max"])[data-skin] .story-card { min-height:300px; background:radial-gradient(circle at 88% 22%,#ffdf9366 0 40px,transparent 41px),linear-gradient(145deg,#1c5059,#102f3b); --story-text:#fff1c8; --story-muted:#e4d4ab; }
+:root[data-skin="national-day"] .story-card,:root[data-skin="788"] .story-card { background:radial-gradient(circle at 93% 8%,#edc96e55 0 70px,transparent 71px),linear-gradient(145deg,#9b3335,#57252d); }
+:root:not([data-skin="max"])[data-skin] .story-card .mountain-art,:root:not([data-skin="max"])[data-skin] .story-card .snow-foreground { display:none; }
+:root:not([data-skin="max"])[data-skin] .story-card::after { content:''; position:absolute; width:116px; height:116px; bottom:36px; right:8px; background:var(--mascot) center/contain no-repeat; pointer-events:none; }
+:root:not([data-skin="max"])[data-skin] .story-copy { padding:24px 20px 136px; }
+:root:not([data-skin="max"])[data-skin] .story-copy h2 { font-size:24px; }
+
+:root:not([data-skin="max"])[data-skin] .story-copy h2 { color:var(--story-text); }

@@ -20,41 +20,27 @@ function mount(root, url) {
    decorations=localStorage.getItem(decorKey)!=='off';
   } catch {}
   const scene=art.closest('.device-scene');
-  const controls=document.createElement('div');controls.className='device-extras';
-  const skinButton=document.createElement('button'),decorButton=document.createElement('button');
-  skinButton.type=decorButton.type='button';skinButton.className='skin-switch';decorButton.className='decor-switch';
-  skinButton.title='切换设备皮肤；双击设备也可以切换';
-  const wish=document.createElement('span');wish.className='device-wish';wish.setAttribute('role','status');
   const sparkles=document.createElement('span');sparkles.className='device-sparkles';sparkles.setAttribute('aria-hidden','true');
   for(let n=0;n<5;n++){const star=document.createElement('i');star.textContent='✦';star.style.setProperty('--n',n);sparkles.append(star);}
-  controls.append(skinButton,decorButton);scene.append(controls,wish,sparkles);
-  function updateDecorations(){
-   scene.classList.toggle('decorations-off',!decorations);
-   decorButton.textContent=decorations?'装饰：开':'装饰：关';
-   decorButton.setAttribute('aria-pressed',String(decorations));
-   if(!decorations){wish.textContent='';scene.classList.remove('celebrating');}
-  }
+  scene.append(sparkles);
   function celebrate(){
    if(!decorations)return;
    clearTimeout(clearWish);const skin=skins.find(s=>s.id===selected);
-   wish.textContent=skin.wish;scene.classList.remove('celebrating');void scene.offsetWidth;scene.classList.add('celebrating');
-   clearWish=setTimeout(()=>{scene.classList.remove('celebrating');wish.textContent='';},2400);
+   scene.classList.remove('celebrating');void scene.offsetWidth;scene.classList.add('celebrating');
+   clearWish=setTimeout(()=>{scene.classList.remove('celebrating');},2400);
   }
   function showArt() {
    const skin=skins.find(s=>s.id===selected);
    art.src=skin.file?new URL(skin.file,original).href:original;
    art.alt='NRadio C2000MAX · '+skin.name;scene.dataset.skin=selected;
    art.setAttribute('aria-label',art.alt+'；双击切换外观，键盘按 Enter 或空格切换');
-   skinButton.textContent=skin.symbol+' '+skin.name;skinButton.setAttribute('aria-label','当前皮肤：'+skin.name+'，点击切换');
+   window.C2000Theme?.setSkin(selected);
   }
   function switchArt() {
    selected=skins[(skins.findIndex(s=>s.id===selected)+1)%skins.length].id;showArt();celebrate();
    try { localStorage.setItem(key,selected); } catch {}
   }
-  skinButton.addEventListener('click',switchArt);
-  decorButton.addEventListener('click',()=>{decorations=!decorations;updateDecorations();try{localStorage.setItem(decorKey,decorations?'on':'off');}catch{}});
   art.addEventListener('click',celebrate);
-  updateDecorations();
   art.setAttribute('role','button');art.tabIndex=0;art.draggable=false;
   art.title='双击切换设备外观';
   // Touch browsers dispatch dblclick too: suppress it after handling a double tap.
@@ -89,12 +75,20 @@ function mount(root, url) {
   const link=document.createElement('a'); link.className=button.className;
   link.href=url(...paths[button.dataset.panel]); link.replaceChildren(...button.childNodes); button.replaceWith(link);
  });
- const slides=[['更广阔的连接','更自由的生活','Connect a Wider World'],['每一刻，畅快相连','让距离，不再遥远','Stay Close. Wherever You Are.'],['让美好，始终在线','让生活，多点可能','A Simpler, Connected Life.']];
- root.querySelectorAll('[data-slide]').forEach(button=>button.addEventListener('click',()=>{
-  const n=Number(button.dataset.slide),s=slides[n];
+ const baseSlides=[['更广阔的连接','更自由的生活','Connect a Wider World'],['每一刻，畅快相连','让距离，不再遥远','Stay Close. Wherever You Are.'],['让美好，始终在线','让生活，多点可能','A Simpler, Connected Life.']];
+ const festivalSlides={
+  'mid-autumn':[['月满今宵','千里共团圆','A Moonlit Connection'],['桂香入怀','好消息抵达','Good Things Find Their Way'],['天涯有此刻','相聚不设限','Together, Near and Far']],
+  'national-day':[['山河锦绣','一路皆风景','Celebrate Every Journey'],['假日慢一点','快乐近一点','A Little More Joy'],['把远方连起','与美好同行','Connected to Possibility']],
+  '788':[['骏马迎春','好运满格','A Year of Good Fortune'],['一路生花','万事顺意','Make Way for Good Things'],['奔向新程','美好相连','A Bright New Journey']]
+ };
+ function showSlide(n){
+  const slides=festivalSlides[window.C2000Theme?.getSkin()]||baseSlides,s=slides[n];
   $('#story-title').replaceChildren(document.createTextNode(s[0]),document.createElement('br'),document.createTextNode(s[1]));
-  set('story-subtitle',s[2]); root.querySelectorAll('[data-slide]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
- }));
+  set('story-subtitle',s[2]);root.querySelectorAll('[data-slide]').forEach(b=>{const i=Number(b.dataset.slide);b.classList.toggle('selected',i===n);b.setAttribute('aria-pressed',String(i===n));b.setAttribute('aria-label','第 '+(i+1)+' 页：'+slides[i][0]);});
+ }
+ root.querySelectorAll('[data-slide]').forEach(button=>button.addEventListener('click',()=>showSlide(Number(button.dataset.slide))));
+ const onSkin=()=>{if(!root.isConnected){document.removeEventListener('c2000-skin-change',onSkin);return;}showSlide(0);};
+ document.addEventListener('c2000-skin-change',onSkin);showSlide(0);
  let slide=0;
  const slideTimer=window.setInterval(()=>{
   if(!root.isConnected){window.clearInterval(slideTimer);return;}
