@@ -103,8 +103,8 @@ dialog::backdrop { background: var(--overlay); backdrop-filter: blur(6px); }
 
 /* Headpieces rest on MAX; decorative layers never intercept taps. */
 .brand-max { position:relative; display:inline-block; }
-:root:not([data-skin="max"])[data-skin] .brand-max::after { content:''; position:absolute; right:-10px; bottom:calc(100% - 9px); width:32px; height:28px; background:url('assets/headpiece-lion.png') center/contain no-repeat; transform:rotate(12deg); pointer-events:none; }
-:root[data-skin="mid-autumn"][data-skin] .brand-max::after { width:38px; height:28px; right:-10px; bottom:calc(100% - 8px); background-image:url('assets/headpiece-rabbit.png'); transform:rotate(8deg); }
+:root:not([data-skin="max"])[data-skin] .brand-max::after { content:''; position:absolute; right:-10px; bottom:calc(100% - 9px); width:32px; height:28px; background:url('assets/headpiece-lion-flat.png') center/contain no-repeat; transform:rotate(12deg); pointer-events:none; }
+:root[data-skin="mid-autumn"][data-skin] .brand-max::after { width:38px; height:28px; right:-10px; bottom:calc(100% - 8px); background-image:url('assets/headpiece-rabbit-flat.png'); transform:rotate(8deg); }
 :root:not([data-skin="max"])[data-skin] .brand-max::before { content:'✦'; position:absolute; right:-18px; top:9px; color:var(--accent); font-size:10px; line-height:1; pointer-events:none; }
 /* Keep the familiar appearance icon; festival artwork belongs inside the menu. */
 .c2000-ui .topbar .theme-picker .theme-toggle { display:grid; }
@@ -120,6 +120,6 @@ dialog::backdrop { background: var(--overlay); backdrop-filter: blur(6px); }
 .theme-festival small { color:var(--text-muted); font-size:11px; }
 @media(max-width:700px) { .c2000-ui .topbar .theme-picker > .theme-control { top:76px; right:0; } }
 
-:root[data-skin="788"][data-skin] .brand-max::after { background-image:url('assets/mascot-horse.png'); transform:rotate(8deg); }
+:root[data-skin="788"][data-skin] .brand-max::after { background-image:url('assets/headpiece-horse-flat.png'); background-size:125%; background-position:50% 55%; transform:rotate(8deg); }
 .c2000-ui .topbar .theme-picker .theme-control > button .icon { flex:none; display:block; margin:0; width:20px; height:20px; }
 .c2000-ui .topbar .theme-picker .theme-choice-label { margin:0; padding:0; line-height:16px; text-align:center; }
