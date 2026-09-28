@@ -28,7 +28,7 @@
       panel.hidden = skin === 'max';
       panel.querySelector('strong').textContent = skinNames[skin];
       panel.querySelector('small').textContent = skin === 'mid-autumn' ? '桂香月满，好事相伴' : skin === '788' ? '骏马迎春，喜乐常在' : '锦绣山河，共赴美好';
-      panel.querySelector('img').src = (window.L?.env?.media || '/luci-static/c2000max-ui') + '/assets/mascot-' + (skin === 'mid-autumn' ? 'rabbit' : 'lion') + '.png';
+      panel.querySelector('img').src = (window.L?.env?.media || '/luci-static/c2000max-ui') + '/assets/mascot-' + (skin === 'mid-autumn' ? 'rabbit' : skin === '788' ? 'horse' : 'lion') + '.png';
     });
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#111111' : '#eef3f8');
   }

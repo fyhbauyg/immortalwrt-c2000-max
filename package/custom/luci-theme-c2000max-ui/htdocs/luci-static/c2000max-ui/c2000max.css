@@ -151,7 +151,7 @@ body.disconnected .operator-logo { opacity: .5; }
 @media (prefers-reduced-motion:reduce) { .celebrating .device-sparkles i { display:none!important; animation:none; } }
 
 :root:not([data-skin="max"])[data-skin] .story-card { min-height:300px; background:radial-gradient(circle at 88% 22%,#ffdf9366 0 40px,transparent 41px),linear-gradient(145deg,#1c5059,#102f3b); --story-text:#fff1c8; --story-muted:#e4d4ab; }
-:root[data-skin="national-day"] .story-card,:root[data-skin="788"] .story-card { background:radial-gradient(circle at 93% 8%,#edc96e55 0 70px,transparent 71px),linear-gradient(145deg,#9b3335,#57252d); }
+:root[data-skin="national-day"] .story-card { background:radial-gradient(circle at 93% 8%,#edc96e55 0 70px,transparent 71px),linear-gradient(145deg,#9b3335,#57252d); }
 :root:not([data-skin="max"])[data-skin] .story-card .mountain-art,:root:not([data-skin="max"])[data-skin] .story-card .snow-foreground { display:none; }
 :root:not([data-skin="max"])[data-skin] .story-card::after { content:''; position:absolute; width:116px; height:116px; bottom:36px; right:8px; background:var(--mascot) center/contain no-repeat; pointer-events:none; }
 :root:not([data-skin="max"])[data-skin] .story-copy { padding:24px 20px 136px; }
@@ -164,3 +164,7 @@ body.disconnected .operator-logo { opacity: .5; }
 .c2000-ui .story-pagination button:is(:hover,:active,:focus,:focus-visible,.selected) { border:0; outline:0; box-shadow:none; background:transparent; -webkit-tap-highlight-color:transparent; }
 .c2000-ui .story-pagination button::after { box-shadow:none; border:0; }
 .c2000-ui .story-pagination button:focus-visible::after { width:15px; border-radius:4px; opacity:1; }
+
+:root[data-skin="national-day"][data-skin] .story-card { background:radial-gradient(circle at 93% 8%,#edc96e55 0 70px,transparent 71px),linear-gradient(145deg,#9b3335,#57252d); }
+:root[data-skin="788"][data-skin] .story-card { background:radial-gradient(ellipse at 0 100%,#d4a65344 0 35%,transparent 35.5%),radial-gradient(ellipse at 90% 12%,#efcf9330 0 22%,transparent 22.5%),linear-gradient(140deg,#8a6031,#493622); --story-text:#fff0ce; --story-muted:#e8ce9d; }
+:root[data-skin="788"] .story-card::before { content:''; position:absolute; right:22px; top:25px; width:66px; height:24px; border-top:2px solid #efd19380; border-bottom:1px solid #efd19360; border-radius:50%; transform:rotate(-12deg); pointer-events:none; }
