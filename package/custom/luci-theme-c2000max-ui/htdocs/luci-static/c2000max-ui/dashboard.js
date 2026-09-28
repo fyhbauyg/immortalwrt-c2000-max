@@ -19,6 +19,7 @@ function mount(root, url) {
    const saved=localStorage.getItem(key);if(skins.some(s=>s.id===saved))selected=saved;
    decorations=localStorage.getItem(decorKey)!=='off';
   } catch {}
+  selected=window.C2000Theme?.getSkin()||selected;
   const scene=art.closest('.device-scene');
   const sparkles=document.createElement('span');sparkles.className='device-sparkles';sparkles.setAttribute('aria-hidden','true');
   for(let n=0;n<5;n++){const star=document.createElement('i');star.textContent='✦';star.style.setProperty('--n',n);sparkles.append(star);}
@@ -34,11 +35,11 @@ function mount(root, url) {
    art.src=skin.file?new URL(skin.file,original).href:original;
    art.alt='NRadio C2000MAX · '+skin.name;scene.dataset.skin=selected;
    art.setAttribute('aria-label',art.alt+'；双击切换外观，键盘按 Enter 或空格切换');
-   window.C2000Theme?.setSkin(selected);
   }
   function switchArt() {
    selected=skins[(skins.findIndex(s=>s.id===selected)+1)%skins.length].id;showArt();celebrate();
-   try { localStorage.setItem(key,selected); } catch {}
+   if(window.C2000Theme)window.C2000Theme.setSkin(selected);
+   else try { localStorage.setItem(key,selected); } catch {}
   }
   art.addEventListener('click',celebrate);
   art.setAttribute('role','button');art.tabIndex=0;art.draggable=false;
@@ -58,6 +59,11 @@ function mount(root, url) {
   art.addEventListener('dblclick',e=>{e.preventDefault();if(Date.now()-lastTouchSwitch>500)switchArt();});
   art.addEventListener('keydown',e=>{if(!e.repeat&&(e.key==='Enter'||e.key===' ')){e.preventDefault();switchArt();}});
   art.addEventListener('error',()=>{if(art.src!==original){selected='max';showArt();}});
+  const syncArt=()=>{
+   if(!root.isConnected){document.removeEventListener('c2000-skin-change',syncArt);return;}
+   selected=window.C2000Theme.getSkin();showArt();
+  };
+  document.addEventListener('c2000-skin-change',syncArt);
   showArt();
  }
  const progressStarted=new WeakSet();
@@ -94,7 +100,7 @@ function mount(root, url) {
   if(!root.isConnected){window.clearInterval(slideTimer);return;}
   if(document.hidden||root.querySelector('.story-card:hover,.story-card:focus-within'))return;
   const selected=root.querySelector('[data-slide].selected');
-  slide=(Number(selected?.dataset.slide??slide)+1)%slides.length;
+  slide=(Number(selected?.dataset.slide??slide)+1)%baseSlides.length;
   root.querySelector('[data-slide="'+slide+'"]').click();
  },3000);
  function renderResources(data) {

@@ -6,8 +6,28 @@
   const compact = matchMedia('(max-width: 700px)');
   const choices = ['system', 'light', 'dark'];
   const skinKey='c2000max-device-art',skinNames={max:'经典银白','788':'马年限定','mid-autumn':'中秋限定','national-day':'国庆限定'};
-  let skin='max';
-  try { const saved=localStorage.getItem(skinKey);if(skinNames[saved])skin=saved; } catch {}
+  const holidayOverrideKey='c2000max-national-day-2026-override';
+  let savedSkin='max', holidayOverride=false;
+  function readSkinPreference() {
+    try {
+      const saved=localStorage.getItem(skinKey);
+      savedSkin=skinNames[saved]?saved:'max';
+      holidayOverride=localStorage.getItem(holidayOverrideKey)==='1';
+    } catch {}
+  }
+  // The campaign is October 1–3, 2026 in Beijing (UTC+8), independent of browser timezone.
+  function inNationalHoliday() {
+    const day=new Date(Date.now()+8*60*60*1000).toISOString().slice(0,10);
+    return day>='2026-10-01' && day<='2026-10-03';
+  }
+  function preferredSkin() { return inNationalHoliday()&&!holidayOverride?'national-day':savedSkin; }
+  readSkinPreference();
+  let skin=preferredSkin();
+  function refreshScheduledSkin() {
+    const next=preferredSkin();
+    if(next===skin)return;
+    skin=next;apply();document.dispatchEvent(new CustomEvent('c2000-skin-change',{detail:skin}));
+  }
   let preference = 'system';
   try { const saved = localStorage.getItem(key); if (choices.includes(saved)) preference = saved; } catch {}
   function apply() {
@@ -40,7 +60,12 @@
   }
   function setSkin(value) {
     if(!skinNames[value])return;
-    skin=value;try{localStorage.setItem(skinKey,value);}catch{}
+    savedSkin=skin=value;
+    if(inNationalHoliday())holidayOverride=true;
+    try {
+      if(holidayOverride)localStorage.setItem(holidayOverrideKey,'1');
+      localStorage.setItem(skinKey,value);
+    } catch {}
     apply();document.dispatchEvent(new CustomEvent('c2000-skin-change',{detail:skin}));
   }
   function closePickers(restoreFocus = false) {
@@ -52,10 +77,14 @@
   apply();
   system.addEventListener('change', apply);
   window.addEventListener('storage', event => {
-    if(event.key===skinKey){skin=skinNames[event.newValue]?event.newValue:'max';apply();document.dispatchEvent(new CustomEvent('c2000-skin-change',{detail:skin}));}
+    if(event.key===skinKey||event.key===holidayOverrideKey||event.key===null){readSkinPreference();refreshScheduledSkin();}
     if (event.key === key || event.key === null) { preference = choices.includes(event.newValue) ? event.newValue : 'system'; apply(); }
   });
   document.addEventListener('DOMContentLoaded', apply);
+  // A long-lived dashboard also enters/leaves the campaign; resumed tabs refresh immediately.
+  setInterval(refreshScheduledSkin,60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshScheduledSkin();});
+  window.addEventListener('pageshow',refreshScheduledSkin);
   document.addEventListener('click', event => {
     const toggle = event.target.closest('[data-theme-toggle]');
     if (toggle) {
