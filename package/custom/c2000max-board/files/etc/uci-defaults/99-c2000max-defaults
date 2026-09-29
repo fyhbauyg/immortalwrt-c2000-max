@@ -49,7 +49,7 @@ case "$sim_slot" in
 esac
 sim_vendor="$(uci -q get c2000max.sim.vendor)"
 case "$sim_vendor" in
-	auto|huawei|fibocom|quectel) ;;
+	auto|huawei|fibocom|quectel|meig) ;;
 	*) uci -q set c2000max.sim.vendor='auto' ;;
 esac
 [ -n "$(uci -q get c2000max.sim.at_port)" ] ||

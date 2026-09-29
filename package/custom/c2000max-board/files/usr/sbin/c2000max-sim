@@ -157,7 +157,7 @@ resolve_vendor() {
 	local section="$1" port="$2" model="$3" configured manufacturer identity
 	configured="$(uci -q get c2000max.sim.vendor)"
 	case "$configured" in
-		huawei|fibocom|quectel) echo "$configured"; return ;;
+		huawei|fibocom|quectel|meig) echo "$configured"; return ;;
 	esac
 
 	manufacturer="$(qmodem_get "$section" manufacturer)"
@@ -168,6 +168,7 @@ resolve_vendor() {
 		*huawei*|*tdtech*|*td\ tech*|*mt5700*) echo huawei; return ;;
 		*fibocom*|*fm350*) echo fibocom; return ;;
 		*quectel*|*rm520*) echo quectel; return ;;
+		*meig*|*srm825*|*srm815*) echo meig; return ;;
 	esac
 
 	manufacturer="$(clean_identity "$(send_at "$port" 'AT+CGMI' 2>/dev/null)")"
@@ -176,6 +177,7 @@ resolve_vendor() {
 		*huawei*|*tdtech*|*td\ tech*|*mt5700*) echo huawei ;;
 		*fibocom*|*fm350*) echo fibocom ;;
 		*quectel*|*rm520*) echo quectel ;;
+		*meig*|*srm825*|*srm815*) echo meig ;;
 		*) echo unknown ;;
 	esac
 }
@@ -507,11 +509,24 @@ query_quectel_channel() {
 	esac
 }
 
+query_meig_channel() {
+    send_at "$1" 'AT^SIMSLOT?' 2>/dev/null | awk -F'[:,]' '
+        /^[[:space:]]*\^SIMSLOT:/ {
+            for (i=2; i<=5; i++) gsub(/[[:space:]\r]/, "", $i)
+            if (NF == 5 && $2 ~ /^[01]$/ && $4 ~ /^[01]$/) {
+                if ($3 == "1" && $5 == "0") print "1"
+                else if ($3 == "0" && $5 == "1") print "2"
+            }
+            exit
+        }'
+}
+
 query_module_channel() {
 	case "$1" in
 		huawei) query_huawei_channel "$2" ;;
 		fibocom) query_fibocom_channel "$2" ;;
 		quectel) query_quectel_channel "$2" ;;
+		meig) query_meig_channel "$2" ;;
 	esac
 }
 
@@ -549,6 +564,7 @@ query_iccid() {
 		huawei) commands='AT^ICCID? AT+CCID' ;;
 		fibocom) commands='AT+CCID? AT+ICCID?' ;;
 		quectel) commands='AT+QCCID AT+CCID' ;;
+		meig) commands='AT+ICCID AT+CCID' ;;
 		*) commands='AT+CCID AT+ICCID?' ;;
 	esac
 	for command in $commands; do
@@ -683,6 +699,38 @@ switch_quectel() {
 	return 0
 }
 
+switch_meig() {
+    local port="$1" target_channel="$2" target_mux="$3"
+    local current_channel current_mux response attempt=0 verified=0
+    current_channel="$(query_meig_channel "$port")"
+    case "$current_channel" in 1|2) ;; *) return 1 ;; esac
+    current_mux="$(read_gpio_mux)"
+    [ "$current_channel" = "$target_channel" ] && [ "$current_mux" = "$target_mux" ] && return 0
+    # SRM825 dual-SIM support is a firmware option. Probe before any mutation.
+    response="$(send_at "$port" 'AT^SIMSLOT=?' 2>/dev/null)"
+    printf '%s\n' "$response" | tr -d ' \r' | grep -q '^\^SIMSLOT:(1[-,]2)$' || return 1
+    # Quiesce the radio before changing the board's SIM2 GPIO mux.
+    response="$(send_at "$port" 'AT+CFUN=0' 2>/dev/null)"
+    at_response_ok "$response" || return 1
+    if write_gpio_mux "$target_mux"; then
+        response="$(send_at "$port" "AT^SIMSLOT=$target_channel" 2>/dev/null)"
+        if at_response_ok "$response"; then
+            while [ "$attempt" -lt 10 ]; do
+                [ "$(query_meig_channel "$port")" = "$target_channel" ] && { verified=1; break; }
+                sleep 1
+                attempt=$((attempt + 1))
+            done
+        fi
+    fi
+    if [ "$verified" != 1 ]; then
+        write_gpio_mux "$current_mux" >/dev/null 2>&1
+        send_at "$port" "AT^SIMSLOT=$current_channel" >/dev/null 2>&1
+    fi
+    response="$(send_at "$port" 'AT+CFUN=1' 2>/dev/null)"
+    at_response_ok "$response" || return 1
+    [ "$verified" = 1 ]
+}
+
 wait_for_route() {
 	local vendor="$1" port="$2" target="$3" retries=15 channel gpio route
 	while [ "$retries" -gt 0 ]; do
@@ -724,7 +772,7 @@ apply_slot() {
 	vendor="$(resolve_vendor "$section" "$port" "$model")"
 	log "resolved SIM modem (model=$model, vendor=$vendor, port=$port)"
 	case "$vendor" in
-		huawei|fibocom|quectel) ;;
+		huawei|fibocom|quectel|meig) ;;
 		*) fail "暂不支持模组：$model" ; return 1 ;;
 	esac
 
@@ -734,6 +782,7 @@ apply_slot() {
 		huawei) switch_huawei "$port" "$target_channel" "$target_mux" || fail "MT5700 SIM 切换命令失败" ;;
 		fibocom) switch_fibocom "$port" "$target_channel" "$target_mux" || fail "FM350 SIM 切换命令失败" ;;
 		quectel) switch_quectel "$port" "$target_channel" "$target_mux" || fail "RM520 SIM 切换命令失败" ;;
+		meig) switch_meig "$port" "$target_channel" "$target_mux" || fail "美格 SIM 切换失败，请确认模组固件支持双 SIM" ;;
 	esac
 	[ -z "$LAST_ERROR" ] || return 1
 

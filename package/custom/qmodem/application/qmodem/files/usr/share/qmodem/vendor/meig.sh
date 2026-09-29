@@ -246,19 +246,13 @@ sim_info()
 {
     m_debug  "Meig sim info"
     
-    at_command="AT^SIMSLOT?"
-    response=$(at ${at_port} ${at_command} | grep "\^SIMSLOT:" | awk -F': ' '{print $2}' | awk -F',' '{print $2}')
-    if [ "$response" != "0" ]; then
-        sim_slot="1"
-    else
-        sim_slot="2"
-    fi
+    sim_slot=$(meig_get_sim_slot_value)
 
     at_command="AT+CGSN"
     imei=$(at $at_port $at_command | sed -n '2p' | sed 's/\r//g')
 
     at_command="AT+CPIN?"
-    sim_status_flag=$(at $at_port $at_command | sed -n '2p')
+    sim_status_flag=$(at "$at_port" "$at_command" | tr -d '\r' | grep '^+CPIN:' | head -n 1)
     sim_status=$(get_sim_status "$sim_status_flag")
 
     if [ "$sim_status" != "ready" ]; then
@@ -390,8 +384,8 @@ cell_info()
 {
     m_debug  "Meig cell info"
 
-    at_command="AT^CELLINFO=${pdp_index:-1}"
-    response=$(at $at_port $at_command | grep "\^CELLINFO:" | sed 's/\^CELLINFO://')
+    at_command="AT^CELLINFO=1"
+    response=$(at $at_port $at_command | grep "\^CELLINFO:" | sed 's/\^CELLINFO://' | tr -d '\"\r' | sed -n '1p')
     
     local rat=""
     network_mode="Unknown Mode"
@@ -401,7 +395,7 @@ cell_info()
     }
     
     case $rat in
-        "5G")
+        "5G"|"NR"|"NR5G-SA")
             network_mode="NR5G-SA Mode"
             nr_duplex_mode=$(echo "$response" | awk -F',' '{print $2}' | tr -d ' ')
             nr_mcc=$(echo "$response" | awk -F',' '{print $3}' | tr -d ' ')
@@ -418,13 +412,13 @@ cell_info()
             nr_rsrq=$(echo "$response" | awk -F',' '{print $16}' | tr -d ' ')
             nr_sinr_num=$(echo "$response" | awk -F',' '{print $17}' | tr -d ' ')
             
-            if [ -n "$nr_sinr_num" ] && echo "$nr_sinr_num" | grep -q '^[0-9.-]*$'; then
+            if [ -n "$nr_sinr_num" ] && echo "$nr_sinr_num" | grep -Eq '^-?[0-9]+([.][0-9]+)?$'; then
                 nr_sinr=$(awk "BEGIN{ print $nr_sinr_num / 10 }" 2>/dev/null || echo "0")
             else
-                nr_sinr="0"
+                nr_sinr=""
             fi
         ;;
-        "LTE-NR")
+        "LTE-NR"|"EN-DC")
             network_mode="EN-DC Mode"
             endc_lte_duplex_mode=$(echo "$response" | awk -F',' '{print $2}' | tr -d ' ')
             endc_lte_mcc=$(echo "$response" | awk -F',' '{print $3}' | tr -d ' ')
@@ -441,10 +435,10 @@ cell_info()
             endc_lte_rsrq=$(echo "$response" | awk -F',' '{print $16}' | tr -d ' ')
             endc_lte_sinr_num=$(echo "$response" | awk -F',' '{print $17}' | tr -d ' ')
             
-            if [ -n "$endc_lte_sinr_num" ] && echo "$endc_lte_sinr_num" | grep -q '^[0-9.-]*$'; then
+            if [ -n "$endc_lte_sinr_num" ] && echo "$endc_lte_sinr_num" | grep -Eq '^-?[0-9]+([.][0-9]+)?$'; then
                 endc_lte_sinr=$(awk "BEGIN{ print $endc_lte_sinr_num / 10 }" 2>/dev/null || echo "0")
             else
-                endc_lte_sinr="0"
+                endc_lte_sinr=""
             fi
             
             endc_lte_tx_power=$(echo "$response" | awk -F',' '{print $22}' | tr -d ' ')
@@ -452,50 +446,50 @@ cell_info()
             endc_nr_mnc="$endc_lte_mnc"
             field_count=$(echo "$response" | awk -F',' '{print NF}')
             
-            if [ "$field_count" -ge 30 ]; then
-                endc_nr_physical_cell_id=$(echo "$response" | awk -F',' '{print $30}' | tr -d ' ')
+            if [ "$field_count" -ge 36 ]; then
+                endc_nr_physical_cell_id=$(echo "$response" | awk -F',' '{print $36}' | tr -d ' ')
             else
                 endc_nr_physical_cell_id=""
             fi
             
-            if [ "$field_count" -ge 31 ]; then
+            if [ "$field_count" -ge 30 ]; then
                 endc_nr_rsrp=$(echo "$response" | awk -F',' '{print $30}' | tr -d ' ')
             else
                 endc_nr_rsrp=""
             fi
             
-            if [ "$field_count" -ge 32 ]; then
+            if [ "$field_count" -ge 31 ]; then
                 endc_nr_rsrq=$(echo "$response" | awk -F',' '{print $31}' | tr -d ' ')
             else
                 endc_nr_rsrq=""
             fi
             
-            if [ "$field_count" -ge 33 ]; then
+            if [ "$field_count" -ge 32 ]; then
                 endc_nr_sinr_num=$(echo "$response" | awk -F',' '{print $32}' | tr -d ' ')
-                if [ -n "$endc_nr_sinr_num" ] && echo "$endc_nr_sinr_num" | grep -q '^[0-9.-]*$'; then
+                if [ -n "$endc_nr_sinr_num" ] && echo "$endc_nr_sinr_num" | grep -Eq '^-?[0-9]+([.][0-9]+)?$'; then
                     endc_nr_sinr=$(awk "BEGIN{ print $endc_nr_sinr_num / 10 }" 2>/dev/null || echo "0")
                 else
-                    endc_nr_sinr="0"
+                    endc_nr_sinr=""
                 fi
             else
-                endc_nr_sinr="0"
+                endc_nr_sinr=""
             fi
             
-            if [ "$field_count" -ge 34 ]; then
+            if [ "$field_count" -ge 33 ]; then
                 endc_nr_band_num=$(echo "$response" | awk -F',' '{print $33}' | tr -d ' ')
                 endc_nr_band=$(get_band "NR" "$endc_nr_band_num")
             else
                 endc_nr_band=""
             fi
             
-            if [ "$field_count" -ge 36 ]; then
+            if [ "$field_count" -ge 35 ]; then
                 nr_dl_bandwidth_num=$(echo "$response" | awk -F',' '{print $35}' | tr -d ' ')
                 endc_nr_dl_bandwidth=$(get_bandwidth "NR" "$nr_dl_bandwidth_num")
             else
                 endc_nr_dl_bandwidth=""
             fi
             
-            if [ "$field_count" -ge 38 ]; then
+            if [ "$field_count" -ge 37 ]; then
                 endc_nr_scs=$(echo "$response" | awk -F',' '{print $37}' | tr -d ' \r')
             else
                 endc_nr_scs=""
@@ -518,10 +512,10 @@ cell_info()
             lte_rsrq=$(echo "$response" | awk -F',' '{print $16}' | tr -d ' ')
             lte_sinr_num=$(echo "$response" | awk -F',' '{print $17}' | tr -d ' ')
             
-            if [ -n "$lte_sinr_num" ] && echo "$lte_sinr_num" | grep -q '^[0-9.-]*$'; then
+            if [ -n "$lte_sinr_num" ] && echo "$lte_sinr_num" | grep -Eq '^-?[0-9]+([.][0-9]+)?$'; then
                 lte_sinr=$(awk "BEGIN{ print $lte_sinr_num / 10 }" 2>/dev/null || echo "0")
             else
-                lte_sinr="0"
+                lte_sinr=""
             fi
             
             field_count=$(echo "$response" | awk -F',' '{print NF}')
@@ -557,6 +551,7 @@ cell_info()
     esac
     
     class="Cell Information"
+    unset extra_info
     add_plain_info_entry "network_mode" "$network_mode" "Network Mode"
     case $network_mode in
     "NR5G-SA Mode")
@@ -574,6 +569,7 @@ cell_info()
         add_plain_info_entry "SCS" "$nr_scs" "SCS"
         ;;
     "EN-DC Mode")
+        extra_info="LTE"
         add_plain_info_entry "LTE" "LTE" ""
         add_plain_info_entry "MCC" "$endc_lte_mcc" "Mobile Country Code"
         add_plain_info_entry "MNC" "$endc_lte_mnc" "Mobile Network Code"
@@ -589,6 +585,7 @@ cell_info()
         add_bar_info_entry "SINR" "$endc_lte_sinr" "Signal to Interference plus Noise Ratio" 0 30 dB
         add_plain_info_entry "TX Power" "$endc_lte_tx_power" "TX Power"
         if [ -n "$endc_nr_physical_cell_id" ] || [ -n "$endc_nr_band" ]; then
+            extra_info="NR5G-NSA"
             add_plain_info_entry "NR5G-NSA" "NR5G-NSA" ""
             add_plain_info_entry "MCC" "$endc_nr_mcc" "Mobile Country Code"
             add_plain_info_entry "MNC" "$endc_nr_mnc" "Mobile Network Code"
@@ -627,6 +624,7 @@ cell_info()
         [ -n "$wcdma_ecio" ] && add_plain_info_entry "Ec/Io" "$wcdma_ecio" "Ec/Io"
         ;;
     esac
+    unset extra_info
 }
 
 get_band()
@@ -659,7 +657,8 @@ get_bandwidth()
         case $network_type in
             "LTE") 
                 if [ "$bandwidth_num" -gt 0 ]; then
-                    bandwidth=$((bandwidth_num / 5))
+                    if [ "$bandwidth_num" = 6 ]; then bandwidth=1.4
+                    else bandwidth=$(awk "BEGIN { print $bandwidth_num / 5 }"); fi
                 fi
                 ;;
             "NR") bandwidth="$bandwidth_num" ;;
@@ -668,4 +667,51 @@ get_bandwidth()
     fi
     
     echo "$bandwidth"
+}
+
+# V3.9 section 7.12: card-present flags are not the active-slot flags.
+meig_parse_sim_slot() {
+    awk -F'[:,]' '/^[[:space:]]*\^SIMSLOT:/ {
+        for (i=2; i<=5; i++) gsub(/[[:space:]\r]/, "", $i)
+        if (NF == 5 && $2 ~ /^[01]$/ && $4 ~ /^[01]$/) {
+            if ($3 == "1" && $5 == "0") print "1"
+            else if ($3 == "0" && $5 == "1") print "2"
+        }
+        exit
+    }'
+}
+
+meig_get_sim_slot_value() {
+    at "$at_port" 'AT^SIMSLOT?' | meig_parse_sim_slot
+}
+
+sim_switch_capabilities() {
+    local response supported=0
+    response=$(at "$at_port" 'AT^SIMSLOT=?')
+    printf '%s\n' "$response" | tr -d ' \r' | grep -q '^\^SIMSLOT:(1[-,]2)$' && supported=1
+    json_add_string supportSwitch "$supported"
+    json_add_array simSlots
+    if [ "$supported" = 1 ]; then
+        json_add_string "" 1
+        json_add_string "" 2
+    fi
+    json_close_array
+}
+
+get_sim_switch_capabilities() { sim_switch_capabilities; }
+get_sim_slot() { json_add_string sim_slot "$(meig_get_sim_slot_value)"; }
+set_sim_slot() {
+    local target="$1" response current attempt=0
+    case "$target" in 1|2) ;; *) json_add_string result 'Invalid SIM slot'; return 1 ;; esac
+    response=$(at "$at_port" "AT^SIMSLOT=$target")
+    json_add_string result "$response"
+    printf '%s\n' "$response" | tr -d '\r' | grep -q '^OK$' || return 1
+    while [ "$attempt" -lt 10 ]; do
+        current=$(meig_get_sim_slot_value)
+        [ "$current" = "$target" ] && { json_add_string sim_slot "$current"; return 0; }
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    json_add_string sim_slot "$current"
+    return 1
 }

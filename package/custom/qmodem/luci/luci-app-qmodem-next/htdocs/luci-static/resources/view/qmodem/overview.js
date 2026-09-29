@@ -208,6 +208,8 @@ LuciTable.prototype = {
 
 return view.extend({
 	load: function() {
+		// Discovery can update UCI while LuCI keeps the previous config cached.
+		uci.unload('qmodem');
 		return Promise.all([
 			uci.load('qmodem')
 		]);
@@ -218,14 +220,15 @@ return view.extend({
 		var sections = uci.sections('qmodem', 'modem-device');
 		
 		sections.forEach(function(section) {
-			if (section.state !== 'disabled' && section.at_port) {
+			var port = section.override_at_port || section.at_port;
+			if (section.state !== 'disabled' && port) {
 				var name = section.name ? section.name.toUpperCase() : 'Unknown';
 				var displayName = section.alias ? section.alias + ' (' + name + ')' : name;
 				
 				modems.push({
 					id: section['.name'],
 					name: displayName,
-					at_port: section.at_port
+					at_port: port
 				});
 			}
 		});
