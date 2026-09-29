@@ -47,6 +47,12 @@ qmodem_get() {
 
 resolve_port() {
 	local section="$1" configured candidate remembered
+	# The verified port owns the transaction. Never re-resolve to a different
+	# configured TTY while holding the global AT lock (cold-boot fallback).
+	if [ "$AT_TRANSACTION_HELD" = 1 ] && [ -n "$AT_TRANSACTION_PORT" ]; then
+		printf '%s\n' "$AT_TRANSACTION_PORT"
+		return 0
+	fi
 	configured="$(uci -q get c2000max.sim.at_port)"
 	if [ -n "$configured" ] && [ "$configured" != auto ]; then
 		echo "$configured"

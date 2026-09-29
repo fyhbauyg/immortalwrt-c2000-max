@@ -124,30 +124,21 @@ _try_slot()
         logger -t modem_init "try modem $1"
         ( sleep 1; /usr/share/qmodem/modem_scan.sh add "$slot" "$type" >/dev/null 2>&1 ) &
     else
-        ( sleep 1; /usr/share/qmodem/modem_scan.sh disable "$slot" >/dev/null 2>&1 ) &
+        # Let the scanner retry late enumeration even when USB is absent now.
+        ( sleep 2; /usr/share/qmodem/modem_scan.sh add "$slot" "$type" >/dev/null 2>&1 ) &
     fi
 }
 
 _try_device()
 {
+    local path data_interface slot
     config_get path "$1" path
-    config_get network "$1" network
     config_get data_interface "$1" data_interface
-    if [ ! -d "$path" ]; then
-        ( sleep 1; /usr/share/qmodem/modem_scan.sh disable "$1" >/dev/null 2>&1 ) &
-        uci delete network.$1
-        uci delete network.${1}v6
-        uci commit network
-        /etc/init.d/network reload
-        return
-    fi
-    # if device_path is not parent of netdevice_path, disable device path and scan again
-    netdevice_path=`readlink -f /sys/class/net/$network/device/`
-    device_path=`readlink -f $path`
-    echo "$netdevice_path" | grep -q "^$device_path"
-    is_parent=$?
-    if [ "$is_parent" -ne 0 ] || [ ! -d "$netdevice_path" ]; then
-        ( sleep 1; /usr/share/qmodem/modem_scan.sh disable "$1" >/dev/null 2>&1 ) &
-        ( sleep 1; /usr/share/qmodem/modem_scan.sh add "$(basename "$path")" "$data_interface" >/dev/null 2>&1 ) &
-    fi
+    case "$data_interface" in usb|pcie) ;; *) return ;; esac
+    [ -n "$path" ] || return
+    slot="$(basename "$path")"
+    # A remembered USB path can appear before its net/AT interfaces on cold
+    # boot. Re-probe every preset; do not keep a persisted disabled state or
+    # delete working network configuration just because enumeration is late.
+    ( sleep 2; /usr/share/qmodem/modem_scan.sh add "$slot" "$data_interface" >/dev/null 2>&1 ) &
 }

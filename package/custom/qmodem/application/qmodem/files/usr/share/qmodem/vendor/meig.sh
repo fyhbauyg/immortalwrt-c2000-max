@@ -225,12 +225,9 @@ base_info()
 {
     m_debug  "Meig base info"
 
-    at_command="AT+CGMM"
-    name=$(at $at_port $at_command | sed -n '2p' | sed 's/\r//g')
-    at_command="AT+CGMI"
-    manufacturer=$(at $at_port $at_command | sed -n '2p' | sed 's/+CGMI: //g' | sed 's/\r//g')
-    at_command="AT+CGMR"
-    revision=$(at $at_port $at_command | grep "+CGMR: " | awk -F': ' '{print $2}' | sed 's/\r//g')
+    name=$(at "$at_port" 'AT+CGMM' | meig_identity_value CGMM)
+    manufacturer=$(at "$at_port" 'AT+CGMI' | meig_identity_value CGMI)
+    revision=$(at "$at_port" 'AT+CGMR' | meig_identity_value CGMR)
     class="Base Information"
     add_plain_info_entry "name" "$name" "Name"
     add_plain_info_entry "manufacturer" "$manufacturer" "Manufacturer"
@@ -714,4 +711,17 @@ set_sim_slot() {
     done
     json_add_string sim_slot "$current"
     return 1
+}
+
+# Accept echoed, prefixed and bare identity responses without depending on line 2.
+meig_identity_value() {
+    awk -v key="$1" '
+        { gsub(/\r/, ""); sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "") }
+        $0 == "" || $0 == "OK" || $0 == "ERROR" || /^AT/ || /^\+CME ERROR/ { next }
+        index($0, "+" key ":") == 1 {
+            sub("^\\+" key ":[ \t]*", ""); gsub(/^"|"$/, ""); print; found=1; exit
+        }
+        !fallback && $0 !~ /^[+^]/ { fallback=$0 }
+        END { if (!found && fallback != "") { gsub(/^"|"$/, "", fallback); print fallback } }
+    '
 }

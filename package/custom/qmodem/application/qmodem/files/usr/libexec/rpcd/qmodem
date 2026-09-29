@@ -941,7 +941,9 @@ EOF
                 else
                     use_ubus_flag=""
                 fi
-                res=$(at "$port" "$cmd")
+                QMODEM_AT_LOCK_WAIT=3
+                export QMODEM_AT_LOCK_WAIT
+                res=$(at "$port" "$cmd" 2>&1)
                 ret=$?
                 
                 json_init
@@ -952,6 +954,8 @@ EOF
                     json_add_string res "$res"
                 else
                     json_add_string status "0"
+                    json_add_string res "${res:-AT command failed or timed out}"
+                    json_add_int exit_code "$ret"
                 fi
                 json_close_object
                 json_dump

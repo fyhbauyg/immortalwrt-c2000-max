@@ -68,12 +68,26 @@ qmodem_at_lock_path()
   printf '/var/lock/qmodem-at-%s.lock\n' "$name"
 }
 
+# Every client has bounded queue waiting, including background pollers.
+# A slow transaction must not leave an unbounded number of RPC workers.
+qmodem_at_wait_lock() {
+  local file="$1" remaining="${QMODEM_AT_LOCK_WAIT:-10}"
+  case "$remaining" in
+    ''|*[!0-9]*) remaining=10 ;;
+  esac
+  while ! lock -n "$file" 2>/dev/null; do
+    [ "$remaining" -gt 0 ] || { echo 'AT queue busy: lock wait expired' >&2; return 75; }
+    sleep 1
+    remaining=$((remaining - 1))
+  done
+}
+
 qmodem_at_lock()
 {
   local lock_file
 
   lock_file="$(qmodem_at_lock_path "$1")" || return 1
-  lock "$lock_file"
+  qmodem_at_wait_lock "$lock_file"
 }
 
 qmodem_at_unlock()
@@ -128,7 +142,7 @@ qmodem_at_transaction_begin()
   QMODEM_AT_TRANSACTION_DAEMON_LOCKED=0
   export QMODEM_AT_TRANSACTION_PORT QMODEM_AT_TRANSACTION_PORT_KEY
   export QMODEM_AT_TRANSACTION_DAEMON_LOCK QMODEM_AT_TRANSACTION_DAEMON_LOCKED
-  if ! lock "$daemon_lock"; then
+  if ! qmodem_at_wait_lock "$daemon_lock"; then
     qmodem_at_transaction_end "$port"
     return 1
   fi
@@ -203,7 +217,7 @@ qmodem_at_daemon_close()
 # "direct" closes the daemon first so a TTY client never races its reader.
 qmodem_at_run()
 (
-  local port="$1" mode="$2" daemon_lock=""
+  local port="$1" mode="$2" daemon_lock="" pending_lock=""
   shift 2
 
   if qmodem_at_transaction_active "$port"; then
@@ -217,7 +231,14 @@ qmodem_at_run()
     exit $?
   fi
 
-  qmodem_at_lock "$port" || exit 1
+  # A nested command for another TTY cannot reacquire its own global lock.
+  # Fail before taking any new lock; the outer transaction retains ownership.
+  if [ -n "${QMODEM_AT_TRANSACTION_PORT_KEY:-}" ]; then
+    echo "AT transaction port mismatch: ${QMODEM_AT_TRANSACTION_PORT:-unknown} -> $port" >&2
+    exit 76
+  fi
+
+  qmodem_at_lock "$port" || exit $?
   trap '[ -z "$daemon_lock" ] || lock -u "$daemon_lock"; qmodem_at_unlock "$port"' 0
   if [ "$mode" = "queued" ] || [ "$mode" = "direct" ]; then
     # ubus-at-daemon currently services ubus methods synchronously on one
@@ -225,8 +246,9 @@ qmodem_at_run()
     # instead of submitting a request that times out in the socket queue and
     # executes late after the caller has already retried.  Direct clients take
     # the same lock before asking the daemon to release its TTY.
-    daemon_lock="${QMODEM_AT_DAEMON_LOCK:-/var/lock/qmodem-at-daemon.lock}"
-    lock "$daemon_lock" || exit 1
+    pending_lock="${QMODEM_AT_DAEMON_LOCK:-/var/lock/qmodem-at-daemon.lock}"
+    qmodem_at_wait_lock "$pending_lock" || exit $?
+    daemon_lock="$pending_lock"
   fi
   trap 'exit 128' 1 2 15
   if [ "$mode" = "direct" ]; then
