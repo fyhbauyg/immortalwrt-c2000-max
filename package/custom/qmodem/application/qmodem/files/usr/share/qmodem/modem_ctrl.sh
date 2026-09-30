@@ -31,26 +31,7 @@ fi
 . $vendor_file
 
 try_cache() {
-    cache_timeout=$1
-    cache_file=$2
-    function_name=$3
-    current_time=$(date +%s)
-    if [ -f "$cache_file" ]; then
-        file_time=$(stat -t "$cache_file" | awk '{print $14}')
-    else
-        file_time=0
-    fi
-    if [ ! -f $cache_file ] || [ $(($current_time - $file_time)) -gt $cache_timeout ]; then
-        touch $cache_file
-        json_add_array modem_info
-        $function_name
-        json_close_array
-        json_dump > $cache_file
-        return 1
-    else
-        cat $cache_file
-        exit 0
-    fi
+    qmodem_info_cache "$@"
 }
 
 get_sms(){
@@ -140,10 +121,12 @@ case $method in
     "base_info")
         cache_file="/tmp/cache_$1_$2"
         try_cache 10 $cache_file base_info
+        exit $?
         ;;
     "cell_info")
         cache_file="/tmp/cache_$1_$2"
         try_cache 10 $cache_file cell_info
+        exit $?
         ;;
     "clear_stats")
         json_init
@@ -238,10 +221,12 @@ case $method in
     "info")
         cache_file="/tmp/cache_$1_$2"
         try_cache 10 $cache_file get_info
+        exit $?
         ;;
     "network_info")
         cache_file="/tmp/cache_$1_$2"
         try_cache 10 $cache_file network_info
+        exit $?
         ;;
     "send_at")
         cmd=$(echo "$3" | jq -r '.at')
@@ -308,6 +293,7 @@ case $method in
     "sim_info")
         cache_file="/tmp/cache_$1_$2"
         try_cache 10 $cache_file sim_info
+        exit $?
         ;;
     #sim_switch
     "get_sim_switch_capabilities")

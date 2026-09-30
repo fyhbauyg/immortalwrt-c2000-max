@@ -14,22 +14,7 @@ TRAFFIC_RESET_DEFAULT_MINUTE=0
 
 # Helper function for caching
 try_cache() {
-    cache_timeout=$1
-    cache_file=$2
-    function_name=$3
-    current_time=$(date +%s)
-    file_time=$(stat -t "$cache_file" 2>/dev/null | awk '{print $14}')
-    [ -z "$file_time" ] && file_time=0
-    if [ ! -f "$cache_file" ] || [ $((current_time - file_time)) -gt $cache_timeout ]; then
-        touch "$cache_file"
-        json_add_array modem_info
-        $function_name
-        json_close_array
-        json_dump > "$cache_file"
-        cat "$cache_file"
-    else
-        cat "$cache_file"
-    fi
+    qmodem_info_cache "$@"
 }
 
 # The LuCI system overview must never initiate an AT transaction.  A cache

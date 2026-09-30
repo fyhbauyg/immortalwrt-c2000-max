@@ -5,10 +5,30 @@ mode=${1:-snapshot}
 case "$mode" in snapshot|queries) ;; *) echo 'Usage: c2000max-modem-accel-diag [snapshot|queries]'; exit 2 ;; esac
 out=/tmp/modem-accel-$(date +%Y%m%d-%H%M%S)-$$
 mkdir -p "$out" || exit 1
+# Preserve boot/OOM evidence before optional AT probes add to the log ring.
+logread > "$out/logread-before.txt" 2>&1
+dmesg > "$out/dmesg-before.txt" 2>&1
+memory_snapshot() {
+ echo "--- memory $(date +%s)"
+ free
+ for f in meminfo swaps pressure/memory pressure/cpu pressure/io; do
+  [ ! -r "/proc/$f" ] || { echo "--- /proc/$f"; cat "/proc/$f"; }
+ done
+ grep -E '^(oom_kill|pgmajfault|pswpin|pswpout|allocstall|compact_fail|nr_slab|nr_dirty|nr_writeback)' /proc/vmstat
+ printf '%s\n' '--- top RSS processes: KiB PID VmSwap-KiB Name'
+ awk 'FNR==1 {if (pid) print rss+0, pid, swap+0, name; rss=swap=0; pid=""; name=""}
+      /^Name:/ {name=$2} /^Pid:/ {pid=$2} /^VmRSS:/ {rss=$2} /^VmSwap:/ {swap=$2}
+      END {if (pid) print rss+0, pid, swap+0, name}' /proc/[0-9]*/status 2>/dev/null | sort -nr | head -n 40
+}
 (
 date
 cat /proc/uptime
 uname -a
+memory_snapshot
+for f in /sys/fs/pstore/*; do
+ [ -f "$f" ] || continue
+ echo "--- $f"; head -c 16384 "$f"; echo
+done
 cat /etc/c2000max-build /etc/openwrt_release 2>/dev/null
 apk list --installed 2>/dev/null | grep -E 'qmodem|modem_scan|c2000max-board|hnat|qmi|mbim'
 for cfg in qmodem c2000max turboacc sqm eqos; do
@@ -34,6 +54,24 @@ ip rule
 ip route show table all
 lsusb
 ps w
+printf '%s\n' '--- AT/cache locks and cache sizes'
+for f in /var/lock/qmodem* /tmp/cache_*_info_*; do
+ [ -f "$f" ] || continue
+ ls -ln "$f"
+ case "$f" in
+  *.lock) head -c 80 "$f"; echo ;;
+  *.tmp.*) ;;
+  /tmp/cache_*) jq -c '{entries:(.modem_info|length),cache_pending}' "$f" 2>/dev/null ;;
+ esac
+done
+printf '%s\n' '--- LuCI files and menus'
+for path in www/luci-static/resources/view/qmodem/overview.js usr/lib/lua/luci/cbi.lua usr/share/luci/menu.d/luci-base.json usr/share/luci/menu.d/luci-app-qmodem-next.json; do
+ for prefix in '' /rom; do
+  ls -ln "$prefix/$path" 2>/dev/null
+  sha256sum "$prefix/$path" 2>/dev/null
+ done
+done
+ls -ln /tmp/luci-indexcache* 2>/dev/null
 ubus -t 5 call network.interface dump
 ubus -t 5 call service list
 if [ -x /usr/sbin/c2000max-hnat-diag ]; then
@@ -43,6 +81,15 @@ for f in hook_toggle hnat_topology hnat_ppd_if; do
  [ -r "/sys/kernel/debug/hnat/$f" ] || continue
  echo "--- hnat/$f"; cat "/sys/kernel/debug/hnat/$f"
 done
+# A second sample while the user uploads distinguishes traffic growth from
+# an idle acceleration table. Do not launch a speed test or read the full table.
+printf '%s\n' '--- first link/CPU sample'
+cat /proc/net/dev /proc/stat /proc/softirqs
+sleep 2
+printf '%s\n' '--- second link/CPU sample'
+cat /proc/net/dev /proc/stat /proc/softirqs
+[ ! -x /usr/sbin/c2000max-hnat-diag ] || /usr/sbin/c2000max-hnat-diag
+memory_snapshot
 if [ "$mode" = queries ] && grep -q '^qmodem_at_wait_lock()' /usr/share/qmodem/modem_util.sh; then
  for section in $(uci -q show qmodem | sed -n 's/^qmodem\.\([^.]*\)=modem-device$/\1/p'); do
   port=$(uci -q get "qmodem.$section.override_at_port")
@@ -51,8 +98,10 @@ if [ "$mode" = queries ] && grep -q '^qmodem_at_wait_lock()' /usr/share/qmodem/m
   case "$port" in /dev/ttyUSB[0-9]*|/dev/ttyACM[0-9]*|/dev/mhi_DUN|/dev/wwan0at0) ;; *) continue ;; esac
   for cmd in AT 'AT+CGMM' 'AT+CPIN?' 'AT+GTCELLLOCK?' 'AT+GTCCINFO?' 'AT+GTUSBMODE?' 'AT+GTRNDIS?'; do
    echo "--- $section $port $cmd"
+   started=$(date +%s)
    sh -c '. /usr/share/qmodem/modem_util.sh; config_section=$1; export QMODEM_AT_LOCK_WAIT=2 QMODEM_AT_BACKEND=ubus; at_timeout "$2" "$3" 3' diag "$section" "$port" "$cmd"
-   echo "exit=$?"
+   rc=$?
+   echo "exit=$rc elapsed_seconds=$(($(date +%s) - started))"
   done
  done
 fi

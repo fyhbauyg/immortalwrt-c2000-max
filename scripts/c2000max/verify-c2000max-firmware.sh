@@ -202,6 +202,8 @@ fi
 
 if [ -n "$ROOTFS" ]; then
 	[ -d "$ROOTFS" ] || fail "rootfs staging directory not found: $ROOTFS"
+	python3 "$ROOT/scripts/c2000max/verify-qmodem-luci-files.py" "$ROOTFS" ||
+		fail "QModem view files or LuCI compatibility libraries are incomplete"
 	for path in \
 		etc/uci-defaults/99-c2000max-defaults \
 		etc/init.d/c2000max-sim \

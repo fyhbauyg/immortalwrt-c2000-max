@@ -2632,3 +2632,9 @@ msgstr "模组初始化后重新发送锁小区命令"
 # Source: view/qmodem/config_advanced.js
 msgid "Delay"
 msgstr "延迟"
+
+msgid "Invalid modem response"
+msgstr "模组返回的数据无效"
+
+msgid "Waiting for the modem to become ready..."
+msgstr "正在等待模组就绪，将自动重试…"

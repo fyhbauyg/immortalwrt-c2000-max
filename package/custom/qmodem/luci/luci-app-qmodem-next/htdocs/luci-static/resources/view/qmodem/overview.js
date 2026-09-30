@@ -360,128 +360,152 @@ return view.extend({
 		});
 	},
 
-	updateModemInfo: function(modemId, tables_map, infoContainer, updateTimeElement, copyrightElement) {
+	renderModemInfo: function(modemId, tables_map, infoContainer, updateTimeElement, results) {
 		var self = this;
-		
-		// Show loading state
+		// Merge the completed modem info groups.
+		var all_info = [];
+		for (var i = 0; i < results.length; i++) {
+			if (results[i] && results[i].modem_info) {
+				all_info = all_info.concat(results[i].modem_info);
+			}
+		}
+
+		// Group by class
+		var grouped = {};
+		all_info.forEach(function(entry) {
+			if (entry.type === 'warning_message') {
+				// Handle warning messages
+				return;
+			}
+
+			var className = entry['class'] || 'General';
+			if (!grouped[className]) {
+				grouped[className] = [];
+			}
+			grouped[className].push(entry);
+		});
+
+		// Clear loading animation if present
+		var loadingDiv = infoContainer.querySelector('.spinning');
+		if (loadingDiv) {
+			infoContainer.removeChild(loadingDiv);
+		}
+
+		// Remove obsolete tables from DOM and map
+		for (var existingClass in tables_map) {
+			if (!grouped[existingClass]) {
+				if (tables_map[existingClass].fieldset.parentNode) {
+					infoContainer.removeChild(tables_map[existingClass].fieldset);
+				}
+				delete tables_map[existingClass];
+			}
+		}
+
+		// Get section order from localStorage
+		var sectionOrder = self.getSectionOrder(modemId);
+		var orderedClasses = [];
+
+		// First add classes in saved order
+		sectionOrder.forEach(function(className) {
+			if (grouped[className]) {
+				orderedClasses.push(className);
+			}
+		});
+
+		// Then add any new classes not in saved order
+		for (var className in grouped) {
+			if (orderedClasses.indexOf(className) === -1) {
+				orderedClasses.push(className);
+			}
+		}
+
+		// Update or create tables in order
+		orderedClasses.forEach(function(className) {
+			if (!tables_map[className]) {
+				tables_map[className] = new LuciTable();
+				infoContainer.appendChild(tables_map[className].fieldset);
+				self.attachSectionHandlers(tables_map[className].fieldset, className, modemId, infoContainer);
+			}
+			tables_map[className].setTitle(className);
+			tables_map[className].setData(grouped[className]);
+
+			// Restore collapsed state
+			var collapsedState = self.getCollapsedState(modemId, className);
+			if (collapsedState) {
+				tables_map[className].fieldset.classList.add('collapsed');
+			} else {
+				tables_map[className].fieldset.classList.remove('collapsed');
+			}
+		});
+
+		// Update refresh time
+		if (updateTimeElement) {
+			var now = new Date();
+			var timeStr = now.getFullYear() + '-' +
+				String(now.getMonth() + 1).padStart(2, '0') + '-' +
+				String(now.getDate()).padStart(2, '0') + ' ' +
+				String(now.getHours()).padStart(2, '0') + ':' +
+				String(now.getMinutes()).padStart(2, '0') + ':' +
+				String(now.getSeconds()).padStart(2, '0');
+			updateTimeElement.textContent = _('Last update') + ': ' + timeStr;
+		}
+	},
+
+	updateModemInfo: function(modemId, tables_map, infoContainer, updateTimeElement, copyrightElement, isCurrent) {
+		var self = this;
+		var current = isCurrent || function() { return true; };
+		var state = infoContainer._qmodemInfo;
+		if (!state || state.modemId !== modemId) {
+			state = infoContainer._qmodemInfo = { modemId: modemId, groups: [] };
+		}
 		if (Object.keys(tables_map).length === 0) {
 			dom.content(infoContainer, E('div', { 'class': 'spinning' }, _('Loading modem information...')));
 		}
-		
-		// Fetch all modem info
-		Promise.all([
-			qmodem.getBaseInfo(modemId),
-			qmodem.getSimInfo(modemId),
-			qmodem.getNetworkInfo(modemId),
-			qmodem.getCellInfo(modemId),
-			qmodem.getCopyright(modemId)
-		]).then(function(results) {
-			// Merge all modem_info arrays (exclude copyright)
-			var all_info = [];
-			for (var i = 0; i < results.length - 1; i++) {
-				if (results[i] && results[i].modem_info) {
-					all_info = all_info.concat(results[i].modem_info);
-				}
-			}
-			
-			// Handle copyright (last result)
-			var copyrightData = results[results.length - 1];
-			if (copyrightElement && copyrightData && copyrightData.copyright) {
-				// Format copyright object into display string
-				var copyrightInfo = copyrightData.copyright;
-				var copyrightText = [];
-				for (var key in copyrightInfo) {
-					copyrightText.push(_(key) + ': ' + copyrightInfo[key]);
-				}
-				copyrightElement.textContent = copyrightText.join(' | ');
-				copyrightElement.style.display = '';
-			} else if (copyrightElement) {
-				copyrightElement.style.display = 'none';
-			}
 
-			// Group by class
-			var grouped = {};
-			all_info.forEach(function(entry) {
-				if (entry.type === 'warning_message') {
-					// Handle warning messages
-					return;
-				}
-				
-				var className = entry['class'] || 'General';
-				if (!grouped[className]) {
-					grouped[className] = [];
-				}
-				grouped[className].push(entry);
+		// One AT-backed RPC at a time. Render each completed group immediately;
+		// an optional SIM query must not hold back signal or network information.
+		var requests = [
+			function() { return qmodem.getBaseInfo(modemId); },
+			function() { return qmodem.getNetworkInfo(modemId); },
+			function() { return qmodem.getCellInfo(modemId); },
+			function() { return qmodem.getSimInfo(modemId); }
+		];
+		var error = null;
+		var chain = Promise.resolve();
+		requests.forEach(function(request, index) {
+			chain = chain.then(function() {
+				if (!current()) return;
+				return request().then(function(result) {
+					if (!current() || !result || result.cache_pending) return;
+					if (!Array.isArray(result.modem_info)) throw new Error(_('Invalid modem response'));
+					state.groups[index] = result;
+					self.renderModemInfo(modemId, tables_map, infoContainer, updateTimeElement, state.groups);
+				});
+			}).catch(function(e) {
+				error = e;
+				console.error('Error fetching modem info:', e);
 			});
-
-			// Clear loading animation if present
-			var loadingDiv = infoContainer.querySelector('.spinning');
-			if (loadingDiv) {
-				infoContainer.removeChild(loadingDiv);
-			}
-
-			// Remove obsolete tables from DOM and map
-			for (var existingClass in tables_map) {
-				if (!grouped[existingClass]) {
-					if (tables_map[existingClass].fieldset.parentNode) {
-						infoContainer.removeChild(tables_map[existingClass].fieldset);
-					}
-					delete tables_map[existingClass];
+		});
+		chain = chain.then(function() {
+			if (!current() || state.copyrightLoaded) return;
+			return qmodem.getCopyright(modemId).then(function(result) {
+				if (!current()) return;
+				state.copyrightLoaded = true;
+				if (copyrightElement && result && result.copyright) {
+					var text = [];
+					Object.keys(result.copyright).forEach(function(key) {
+						text.push(_(key) + ': ' + result.copyright[key]);
+					});
+					copyrightElement.textContent = text.join(' | ');
+					copyrightElement.style.display = '';
 				}
-			}
-
-			// Get section order from localStorage
-			var sectionOrder = self.getSectionOrder(modemId);
-			var orderedClasses = [];
-			
-			// First add classes in saved order
-			sectionOrder.forEach(function(className) {
-				if (grouped[className]) {
-					orderedClasses.push(className);
-				}
-			});
-			
-			// Then add any new classes not in saved order
-			for (var className in grouped) {
-				if (orderedClasses.indexOf(className) === -1) {
-					orderedClasses.push(className);
-				}
-			}
-			
-			// Update or create tables in order
-			orderedClasses.forEach(function(className) {
-				if (!tables_map[className]) {
-					tables_map[className] = new LuciTable();
-					infoContainer.appendChild(tables_map[className].fieldset);
-					self.attachSectionHandlers(tables_map[className].fieldset, className, modemId, infoContainer);
-				}
-				tables_map[className].setTitle(className);
-				tables_map[className].setData(grouped[className]);
-				
-				// Restore collapsed state
-				var collapsedState = self.getCollapsedState(modemId, className);
-				if (collapsedState) {
-					tables_map[className].fieldset.classList.add('collapsed');
-				} else {
-					tables_map[className].fieldset.classList.remove('collapsed');
-				}
-			});
-			
-			// Update refresh time
-			if (updateTimeElement) {
-				var now = new Date();
-				var timeStr = now.getFullYear() + '-' + 
-					String(now.getMonth() + 1).padStart(2, '0') + '-' + 
-					String(now.getDate()).padStart(2, '0') + ' ' + 
-					String(now.getHours()).padStart(2, '0') + ':' + 
-					String(now.getMinutes()).padStart(2, '0') + ':' + 
-					String(now.getSeconds()).padStart(2, '0');
-				updateTimeElement.textContent = _('Last update') + ': ' + timeStr;
-			}
-		}).catch(function(e) {
-			console.error('Error fetching modem info:', e);
-			dom.content(infoContainer, E('div', { 'class': 'alert-message warning' },
-				_('Error loading modem information: %s').format(e.message)));
+			}).catch(function(e) { console.error('Error fetching modem copyright:', e); });
+		});
+		return chain.then(function() {
+			if (!current() || Object.keys(tables_map).length !== 0) return;
+			dom.content(infoContainer, E('div', { 'class': 'alert-message warning' }, error
+				? _('Error loading modem information: %s').format(error.message)
+				: _('Waiting for the modem to become ready...')));
 		});
 	},
 
@@ -544,6 +568,8 @@ return view.extend({
 		
 		// Tables map to store LuciTable instances
 		var tables_map = {};
+		var pendingRefresh = null;
+		var generation = 0;
 		
 		// Update function
 		var updateInfo = function(clearTables) {
@@ -551,6 +577,9 @@ return view.extend({
 			
 			// Clear tables when switching modem
 			if (clearTables) {
+				generation++;
+				infoContainer._qmodemInfo = null;
+				copyrightDiv.style.display = 'none';
 				for (var className in tables_map) {
 					if (tables_map[className].fieldset.parentNode) {
 						infoContainer.removeChild(tables_map[className].fieldset);
@@ -559,7 +588,16 @@ return view.extend({
 				tables_map = {};
 			}
 			
-			self.updateModemInfo(selectedModem, tables_map, infoContainer, updateTimeDiv, copyrightDiv);
+			if (pendingRefresh) return pendingRefresh;
+			var requestGeneration = generation;
+			var done = function() {
+				pendingRefresh = null;
+				if (generation !== requestGeneration) return updateInfo(false);
+			};
+			pendingRefresh = self.updateModemInfo(selectedModem, tables_map, infoContainer,
+				updateTimeDiv, copyrightDiv, function() { return generation === requestGeneration; })
+				.then(done, done);
+			return pendingRefresh;
 		};
 		
 		// Selector change handler
@@ -572,8 +610,7 @@ return view.extend({
 		
 		// Start polling (every 10 seconds)
 		poll.add(function() {
-			var selectedModem = select.value;
-			self.updateModemInfo(selectedModem, tables_map, infoContainer, updateTimeDiv, copyrightDiv);
+			return updateInfo(false);
 		}, 10);
 		
 		return container;

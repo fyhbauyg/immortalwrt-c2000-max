@@ -2,6 +2,52 @@
 # Copyright (C) 2024 Tom <fjrcn@outlook.com>
 . /lib/functions.sh
 
+# Both RPC interfaces and the LED reader share these cache snapshots. Never
+# expose a touched/partial JSON file or start another worker for the same group.
+qmodem_info_cache()
+(
+  local ttl="$1" file="$2" generator="$3" now modified age
+  local cache_lock="${2}.lock" cache_tmp="${2}.tmp.$$"
+
+  qmodem_cache_valid() {
+    [ -s "$file" ] && jq -e '.modem_info | type == "array"' "$file" >/dev/null 2>&1
+  }
+  qmodem_cache_fresh() {
+    qmodem_cache_valid || return 1
+    now=$(date +%s)
+    modified=$(stat -c %Y "$file" 2>/dev/null) || return 1
+    age=$((now - modified))
+    [ "$age" -ge 0 ] && [ "$age" -le "$ttl" ]
+  }
+  qmodem_cache_snapshot() {
+    if qmodem_cache_valid; then cat "$file";
+    else printf '%s\n' '{"modem_info":[],"cache_pending":true}'; fi
+  }
+
+  if qmodem_cache_fresh; then cat "$file"; exit 0; fi
+  if ! lock -n "$cache_lock" 2>/dev/null; then
+    qmodem_cache_snapshot
+    exit 0
+  fi
+  trap 'rm -f "$cache_tmp"; lock -u "$cache_lock"' 0
+  trap 'exit 128' 1 2 15
+  # Another worker may have completed between the freshness check and locking.
+  if qmodem_cache_fresh; then cat "$file"; exit 0; fi
+  : "${QMODEM_AT_LOCK_WAIT:=2}"
+  export QMODEM_AT_LOCK_WAIT
+  json_init
+  json_add_array modem_info
+  "$generator"
+  json_close_array
+  if json_dump > "$cache_tmp" &&
+      jq -e '.modem_info | type == "array"' "$cache_tmp" >/dev/null 2>&1 &&
+      mv -f "$cache_tmp" "$file"; then
+    cat "$file"
+  else
+    qmodem_cache_snapshot
+  fi
+)
+
 qmodem_at_config_section()
 {
   printf '%s\n' "${modem_config:-${config_section:-}}"
