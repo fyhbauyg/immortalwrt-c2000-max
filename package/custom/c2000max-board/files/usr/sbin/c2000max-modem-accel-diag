@@ -1,0 +1,63 @@
+#!/bin/sh
+# Capture before restarting the modem or acceleration services.
+umask 077
+mode=${1:-snapshot}
+case "$mode" in snapshot|queries) ;; *) echo 'Usage: c2000max-modem-accel-diag [snapshot|queries]'; exit 2 ;; esac
+out=/tmp/modem-accel-$(date +%Y%m%d-%H%M%S)-$$
+mkdir -p "$out" || exit 1
+(
+date
+cat /proc/uptime
+uname -a
+cat /etc/c2000max-build /etc/openwrt_release 2>/dev/null
+apk list --installed 2>/dev/null | grep -E 'qmodem|modem_scan|c2000max-board|hnat|qmi|mbim'
+for cfg in qmodem c2000max turboacc sqm eqos; do
+ uci -q show "$cfg" | grep -E '=modem-device|[.](name|state|manufacturer|platform|at_port|override_at_port|network|alias|mode|dial_mode|driver|enable_dial|role|wan_mode|fastpath|enabled|serialized_at|slot|last_forced_gpio|last_force_verification|lockcell_boot_hook_enabled|lockcell_boot_hook_delay|lockcell_boot_hook_at_cmds)='
+done
+for f in /var/run/c2000max-hnat-effective /var/run/c2000max-whnat-effective /var/run/c2000max-hnat-settings-effective /var/run/c2000max-hnat.degraded /var/run/c2000max-port-role.degraded /var/run/c2000max-leigod-active /var/run/c2000max-sim-boot.*; do
+ [ -f "$f" ] || continue
+ echo "--- $f"; head -c 4096 "$f"; echo
+done
+for dir in /sys/class/net/*; do
+ [ -d "$dir" ] || continue
+ echo "--- $(basename "$dir")"
+ for f in type ifindex flags mtu address qmi/raw_ip; do
+  [ ! -r "$dir/$f" ] || { printf '%s=' "$f"; cat "$dir/$f"; }
+ done
+ readlink -f "$dir/device/driver" 2>/dev/null
+done
+for key in firewall.@defaults[0].flow_offloading firewall.@defaults[0].flow_offloading_hw; do
+ printf '%s=' "$key"; uci -q get "$key"
+done
+ip -s link
+ip rule
+ip route show table all
+lsusb
+ps w
+ubus -t 5 call network.interface dump
+ubus -t 5 call service list
+if [ -x /usr/sbin/c2000max-hnat-diag ]; then
+ /usr/sbin/c2000max-hnat-diag
+fi
+for f in hook_toggle hnat_topology hnat_ppd_if; do
+ [ -r "/sys/kernel/debug/hnat/$f" ] || continue
+ echo "--- hnat/$f"; cat "/sys/kernel/debug/hnat/$f"
+done
+if [ "$mode" = queries ] && grep -q '^qmodem_at_wait_lock()' /usr/share/qmodem/modem_util.sh; then
+ for section in $(uci -q show qmodem | sed -n 's/^qmodem\.\([^.]*\)=modem-device$/\1/p'); do
+  port=$(uci -q get "qmodem.$section.override_at_port")
+  [ -n "$port" ] || port=$(uci -q get "qmodem.$section.at_port")
+  [ -c "$port" ] || continue
+  case "$port" in /dev/ttyUSB[0-9]*|/dev/ttyACM[0-9]*|/dev/mhi_DUN|/dev/wwan0at0) ;; *) continue ;; esac
+  for cmd in AT 'AT+CGMM' 'AT+CPIN?' 'AT+GTCELLLOCK?' 'AT+GTCCINFO?' 'AT+GTUSBMODE?' 'AT+GTRNDIS?'; do
+   echo "--- $section $port $cmd"
+   sh -c '. /usr/share/qmodem/modem_util.sh; config_section=$1; export QMODEM_AT_LOCK_WAIT=2 QMODEM_AT_BACKEND=ubus; at_timeout "$2" "$3" 3' diag "$section" "$port" "$cmd"
+   echo "exit=$?"
+  done
+ done
+fi
+) > "$out/report.txt" 2>&1
+logread > "$out/logread.txt"
+dmesg > "$out/dmesg.txt"
+tar -czf "$out.tar.gz" -C /tmp "$(basename "$out")" || exit 1
+echo "Diagnostic archive: $out.tar.gz"

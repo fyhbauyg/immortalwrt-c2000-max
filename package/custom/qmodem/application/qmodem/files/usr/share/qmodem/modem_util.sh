@@ -447,12 +447,63 @@ qmodem_lockcell_boot_hook_sync()
 	local en_boot_hook="$2"
 
 	shift 2
+	# Older RPC clients can omit this optional field. Preserve the saved
+	# preference unless they explicitly request a change.
+	[ -n "$en_boot_hook" ] || en_boot_hook="$(uci -q get "qmodem.${section}.lockcell_boot_hook_enabled")"
 	if qmodem_bool_enabled "$en_boot_hook"; then
 		[ -z "$*" ] && qmodem_lockcell_boot_hook_clear "$section" && return
 		qmodem_lockcell_boot_hook_save "$section" 15 "$@"
 	else
 		qmodem_lockcell_boot_hook_clear "$section"
 	fi
+}
+
+# The serial tool may return exit 0 with an AT ERROR response. Configuration
+# changes are committed only after the modem's final OK has been observed.
+qmodem_at_response_ok()
+{
+	printf '%s\n' "$1" | tr -d '\r' | awk '
+		/^[[:space:]]*OK[[:space:]]*$/ { ok=1 }
+		/^[[:space:]]*(ERROR|\+CME ERROR|\+CMS ERROR)/ { failed=1 }
+		END { exit !(ok && !failed) }'
+}
+
+qmodem_lockcell_replay_command()
+{
+	local command="$1" response attempt=0 rc
+	[ -n "$command" ] || return 0
+	lockcell_replay_count=$((lockcell_replay_count + 1))
+	while [ "$attempt" -lt 3 ]; do
+		response="$(QMODEM_AT_LOCK_WAIT=2 at_timeout "$lockcell_replay_port" "$command" 5)"
+		rc=$?
+		if [ "$rc" = 0 ] && qmodem_at_response_ok "$response"; then
+			m_debug "lockcell restore succeeded for $lockcell_replay_section on $lockcell_replay_port"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		[ "$attempt" -ge 3 ] || sleep 1
+	done
+	lockcell_replay_failed=1
+	m_debug "lockcell restore failed for $lockcell_replay_section on $lockcell_replay_port; saved settings retained"
+	return 1
+}
+
+qmodem_lockcell_boot_hook_replay()
+{
+	local lockcell_replay_section="$1" lockcell_replay_port="$2"
+	local enabled delay lockcell_replay_failed=0 lockcell_replay_count=0
+
+	[ -n "$lockcell_replay_section" ] || return 1
+	enabled="$(uci -q get "qmodem.${lockcell_replay_section}.lockcell_boot_hook_enabled")"
+	qmodem_bool_enabled "$enabled" || return 0
+	[ -n "$lockcell_replay_port" ] || return 1
+	delay="$(uci -q get "qmodem.${lockcell_replay_section}.lockcell_boot_hook_delay")"
+	case "$delay" in ''|*[!0-9]*) delay=15 ;; esac
+	[ "$delay" -le 30 ] 2>/dev/null || delay=15
+	[ "$delay" = 0 ] || sleep "$delay"
+	config_load qmodem
+	config_list_foreach "$lockcell_replay_section" lockcell_boot_hook_at_cmds qmodem_lockcell_replay_command
+	[ "$lockcell_replay_count" -gt 0 ] && [ "$lockcell_replay_failed" = 0 ]
 }
 
 update_sim_slot()

@@ -17,7 +17,7 @@ case $init_type in
         debug_subject="pre_dial"
         ;;
     *)
-        m_debug "init_type error"
+        logger -t modem_hook "init_type error: $init_type"
         exit 1
         ;;
 esac
@@ -29,39 +29,30 @@ _execute_ats(){
     m_debug "execute_ats_result $config_section: $res"
 }
 
-_execute_lockcell_boot_hook(){
-    local enabled lockcell_delay
-
-    [ "$init_type" = "post_init" ] || return 0
-
-    config_get enabled $config_section lockcell_boot_hook_enabled
-    qmodem_bool_enabled "$enabled" || return 0
-
-    config_get lockcell_delay $config_section lockcell_boot_hook_delay
-    [ -z "$lockcell_delay" ] && lockcell_delay="15"
-    sleep "$lockcell_delay"
-
-    config_list_foreach $config_section lockcell_boot_hook_at_cmds _execute_ats
-}
-
 . /usr/share/qmodem/modem_util.sh
 config_load ${config_name}
 
-config_get ${cfg_prefix}_delay $config_section delay
+config_get delay "$config_section" "${cfg_prefix}_delay" 0
 
-config_get at_port $config_section  at_port
+config_get at_port "$config_section" at_port
+config_get override_at_port "$config_section" override_at_port
+[ -z "$override_at_port" ] || at_port="$override_at_port"
 
-if [ -f "$at_port" ] || [ -z "$at_port" ]; then
-    m_debug "$config_section:at_port is not set or not a file"
+if [ ! -c "$at_port" ]; then
+    m_debug "$config_section: AT port is not a character device"
     m_debug "at_port $config_section: $at_port"
     exit 1
 fi
 
-if [ -n "$delay"  ]; then
-    sleep $delay
+case "$delay" in ''|*[!0-9]*) delay=0 ;; esac
+if [ "$delay" -gt 0 ]; then
+    sleep "$delay"
 fi
 
 
 
 config_list_foreach $config_section ${cfg_prefix}_at_cmds   _execute_ats
-_execute_lockcell_boot_hook
+# USB rediscovery and the SIM worker can finish in either order. Replay the
+# saved opt-in lock after pre-dial commands too, once the SIM boot gate and
+# modem preparation have completed. Never erase settings on an AT failure.
+qmodem_lockcell_boot_hook_replay "$config_section" "$at_port"

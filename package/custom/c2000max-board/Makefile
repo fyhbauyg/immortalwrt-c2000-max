@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
 PKG_VERSION:=2.37.5
-PKG_RELEASE:=7
+PKG_RELEASE:=8
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -83,6 +83,7 @@ define Package/c2000max-board/install
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-eqos-locked $(1)/usr/sbin/c2000max-eqos-locked
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-hnat-locked $(1)/usr/sbin/c2000max-hnat-locked
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-hnat-diag $(1)/usr/sbin/c2000max-hnat-diag
+	$(INSTALL_BIN) ./files/usr/sbin/c2000max-modem-accel-diag $(1)/usr/sbin/c2000max-modem-accel-diag
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-access $(1)/usr/sbin/c2000max-access
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-swap $(1)/usr/sbin/c2000max-swap
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-adblock-compat $(1)/usr/sbin/c2000max-adblock-compat
