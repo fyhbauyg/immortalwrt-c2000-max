@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-board
 PKG_VERSION:=2.37.5
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
@@ -15,7 +15,7 @@ define Package/c2000max-board
 	+kmod-dummy +kmod-mediatek_hnat +mtkhnat_util +hnat-detect \
 	+luci-app-turboacc-mtk +luci-app-eqos-mtk +luci-app-c2000max-traffic \
 	+mwan3 +coreutils-timeout +tc +kmod-sched-cake +kmod-ifb \
-	+flock +uboot-envtools +zram-swap +gawk +grep +sed +coreutils-sort +sfdisk +mwctl
+	+flock +coreutils-nohup +uboot-envtools +zram-swap +gawk +grep +sed +coreutils-sort +sfdisk +mwctl
 endef
 
 define Package/c2000max-board/description
@@ -75,6 +75,7 @@ define Package/c2000max-board/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-nrqos $(1)/usr/sbin/c2000max-nrqos
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-sim $(1)/usr/sbin/c2000max-sim
+	$(INSTALL_BIN) ./files/usr/sbin/c2000max-sim-job $(1)/usr/sbin/c2000max-sim-job
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-leds $(1)/usr/sbin/c2000max-leds
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-fan $(1)/usr/sbin/c2000max-fan
 	$(INSTALL_BIN) ./files/usr/sbin/c2000max-hwmon $(1)/usr/sbin/c2000max-hwmon

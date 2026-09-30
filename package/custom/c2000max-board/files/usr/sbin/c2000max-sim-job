@@ -1,0 +1,73 @@
+#!/bin/sh
+# Keep USB re-enumeration outside the short rpcd/LuCI request lifetime.
+ROOT="${C2000MAX_SIM_JOB_ROOT:-/var/run/c2000max-sim-jobs}"
+CLI="${C2000MAX_SIM_JOB_CLI:-/usr/sbin/c2000max-sim}"
+
+error() {
+	printf '{"success":false,"done":true,"message":"%s"}\n' "$1"
+}
+
+valid_id() {
+	printf '%s\n' "$1" | grep -Eq '^job\.[A-Za-z0-9]{6}$'
+}
+
+case "$1" in
+	start)
+		action="$2" slot="$3"
+		case "$action:$slot" in
+			switch:external1|switch:external2|switch:internal|force:external1|force:external2) ;;
+			*) error '无效 SIM 操作'; exit 1 ;;
+		esac
+		umask 077
+		mkdir -p "$ROOT" || { error '无法创建 SIM 任务目录'; exit 1; }
+		exec 9>"$ROOT/queue.lock"
+		flock -n 9 || { error 'SIM 操作正忙，请等待完成'; exit 1; }
+		dir="$(mktemp -d "$ROOT/job.XXXXXX")" || { error '无法创建 SIM 任务'; exit 1; }
+		id="${dir##*/}"
+		printf '{"success":true,"done":false,"job_id":"%s"}\n' "$id" > "$dir/status.json"
+		# FD 9 deliberately survives the handoff so only one modem operation
+		# runs at a time. All RPC pipe descriptors are closed in the worker.
+		nohup /bin/sh "$0" run "$id" "$action" "$slot" </dev/null >/dev/null 2>&1 &
+		pid=$!
+		printf '%s\n' "$pid" > "$dir/pid"
+		cat "$dir/status.json"
+		;;
+	run)
+		id="$2" action="$3" slot="$4"
+		valid_id "$id" && [ -d "$ROOT/$id" ] || exit 1
+		dir="$ROOT/$id"
+		case "$action:$slot" in
+			switch:external1|switch:external2|switch:internal|force:external1|force:external2) ;;
+			*) exit 1 ;;
+		esac
+		# Timeout sends TERM to the CLI process group; its traps release AT
+		# locks and restore modem power if cancellation occurred while off.
+		timeout -s TERM -k 5 180 "$CLI" "$action" "$slot" > "$dir/result.tmp" 2> "$dir/error.log"
+		rc=$?
+		if ! jq -e 'type == "object" and (.success | type == "boolean")' "$dir/result.tmp" >/dev/null 2>&1; then
+			if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+				error 'SIM 操作等待超时，请查看 USB、AT 队列和模组启动日志' > "$dir/result.tmp"
+			else
+				error 'SIM 操作异常退出，请查看当前状态和系统日志' > "$dir/result.tmp"
+			fi
+		fi
+		jq --arg id "$id" '{success: .success, done: true, job_id: $id, result: .}' "$dir/result.tmp" > "$dir/status.tmp" &&
+			mv -f "$dir/status.tmp" "$dir/status.json"
+		flock -u 9
+		;;
+	status)
+		id="$2"
+		valid_id "$id" && [ -r "$ROOT/$id/status.json" ] || {
+			error 'SIM 任务不存在或已被重启清除'; exit 1;
+		}
+		if ! jq -e '.done == true' "$ROOT/$id/status.json" >/dev/null 2>&1; then
+			pid="$(cat "$ROOT/$id/pid" 2>/dev/null)"
+			case "$pid" in ''|*[!0-9]*) pid=0 ;; esac
+			if [ "$pid" -le 1 ] || ! kill -0 "$pid" 2>/dev/null; then
+				error 'SIM 任务已停止，请刷新查看当前状态'; exit 1
+			fi
+		fi
+		cat "$ROOT/$id/status.json"
+		;;
+	*) error '无效 SIM 任务命令'; exit 1 ;;
+esac

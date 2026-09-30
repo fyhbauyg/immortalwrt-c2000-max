@@ -25,6 +25,27 @@ var callForce = rpc.declare({
 	expect: { '': {} }
 });
 
+var callJobStatus = rpc.declare({
+	object: 'c2000max', method: 'sim_job_status',
+	params: [ 'job_id' ], expect: { '': {} }
+});
+
+function waitForSimJob(result) {
+	if (!result || !result.job_id || result.done)
+		return Promise.resolve(result || {});
+	var id = result.job_id, attempts = 0;
+	function check() {
+		return callJobStatus(id).then(function(state) {
+			if (state.done)
+				return state.result || state;
+			if (++attempts >= 120)
+				throw new Error(_('等待 SIM 操作超时，请刷新查看当前状态'));
+			return new Promise(function(resolve) { window.setTimeout(resolve, 2000); }).then(check);
+		});
+	}
+	return check();
+}
+
 var slotNames = {
 	external1: _('外置卡槽 1'),
 	external2: _('外置卡槽 2'),
@@ -72,7 +93,7 @@ return view.extend({
 		if (data.forced_slot) {
 			table.appendChild(E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td left' }, _('最近一次强制 GPIO 操作')),
-				E('td', { 'class': 'td left' }, _('GPIO48=%s（仅修改复用器，实际换卡未确认）').format(value(data.forced_gpio, '-')))
+				E('td', { 'class': 'td left' }, _('GPIO48=%s（模组已重启）').format(value(data.forced_gpio, '-')) + ' · ' + ({ changed: _('已确认换卡'), unchanged: _('ICCID 未变化，换卡未确认'), readable: _('SIM 可读，换卡未确认'), unavailable: _('SIM 未就绪，换卡未确认') }[data.force_verification] || _('换卡未确认')))
 			]));
 		}
 
@@ -91,11 +112,11 @@ return view.extend({
 				'class': 'btn cbi-button cbi-button-negative',
 				'type': 'button',
 				'click': ui.createHandlerFn(this, 'handleForce', slot)
-			}, _('设置 GPIO48=%s（%s）').format(slot === 'external1' ? '0' : '1', slot === 'external1' ? _('低电平') : _('高电平'))));
+			}, _('重启并设置 GPIO48=%s（%s）').format(slot === 'external1' ? '0' : '1', slot === 'external1' ? _('低电平') : _('高电平'))));
 		}, this));
 		var forceBox = E('div', { 'class': 'alert-message warning', 'style': 'margin-top:1em' }, [
-			E('strong', {}, _('SIM 复用器调试：')),
-			E('span', {}, _('仅修改 CPE-Sel0 / GPIO48，不切换模组的 SIM 通道，也不确认实际卡槽。模组通道 1 激活时，修改复用 GPIO 可能没有效果；通道 2 激活时，高电平路径按当前板级映射对应内置卡。请用切换前后 ICCID 核验。')),
+			E('strong', {}, _('GPIO 切卡与模组重启：')),
+			E('span', {}, _('模组断电后切换 GPIO48，再重新上电读取 SIM，并检查 ICCID 是否变化。该操作保留模组当前的内部 SIM 通道；若切换后仍读到原卡，请检查 SIM 通道与硬件连接。')),
 			forceButtons
 		]);
 
@@ -116,7 +137,7 @@ return view.extend({
 			E('p', { 'class': 'spinning' }, _('正在安全停用 SIM、切换模组通道/GPIO 并校验结果，请稍候……'))
 		]);
 
-		return callSwitch(slot).then(L.bind(function(result) {
+		return callSwitch(slot).then(waitForSimJob).then(L.bind(function(result) {
 			ui.hideModal();
 			this.updateStatus(result);
 			ui.addNotification(null, E('p', {}, result.success ? value(result.message, _('SIM 卡切换成功')) : value(result.message, _('SIM 卡切换失败'))),
@@ -133,7 +154,7 @@ return view.extend({
 		var self = this;
 		ev.currentTarget.blur();
 		ui.showModal(_('确认强制 GPIO 切换'), [
-			E('p', {}, _('该操作会绕过模组型号与 AT 能力检查，直接改写 GPIO48。当前蜂窝连接可能立即中断，并且页面显示的卡槽无法通过不受支持模组自动校验。')),
+			E('p', {}, _('该操作会让模组断电约 8 秒，在断电期间设置 GPIO48，然后重新上电并读取 SIM。蜂窝网络会暂时断开，路由器和 Wi-Fi 保持运行。')),
 			E('p', {}, _('目标 GPIO48=%s；实际卡槽需另行确认').format(slot === 'external1' ? '0' : '1')),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -153,10 +174,10 @@ return view.extend({
 
 	executeForce: function(slot) {
 		poll.stop();
-		ui.showModal(_('正在强制切换 GPIO'), [
-			E('p', { 'class': 'spinning' }, _('正在直接写入 SIM 复用 GPIO，请稍候……'))
+		ui.showModal(_('正在切换 SIM 并重启模组'), [
+			E('p', { 'class': 'spinning' }, _('正在断电切换 GPIO、重新启动模组并等待 SIM 就绪，可能需要一至两分钟……'))
 		]);
-		return callForce(slot).then(L.bind(function(result) {
+		return callForce(slot).then(waitForSimJob).then(L.bind(function(result) {
 			ui.hideModal();
 			this.updateStatus(result);
 			ui.addNotification(null, E('p', {}, result.success ? value(result.message, _('GPIO 强制切换完成')) : value(result.message, _('GPIO 强制切换失败'))),

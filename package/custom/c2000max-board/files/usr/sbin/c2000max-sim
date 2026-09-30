@@ -21,6 +21,9 @@ HUAWEI_ACTIVATION_WARNING=0
 SIM_LOCK_HELD=0
 AT_TRANSACTION_HELD=0
 AT_TRANSACTION_PORT=
+MODEM_RESTARTED_PORT=
+MODEM_POWER_CYCLE_ACTIVE=0
+MODEM_POWER_CYCLE_OLD_MUX=
 
 log() {
 	local sim_uptime sim_idle
@@ -122,7 +125,20 @@ end_at_transaction() {
 	AT_TRANSACTION_PORT=
 }
 
+recover_modem_power() {
+	# A cancelled switch must not strand the modem without power. Shutdown
+	# takes priority and must never be undone by this recovery.
+	if [ "$MODEM_POWER_CYCLE_ACTIVE" = 1 ] && [ ! -e "$SHUTDOWN_MARKER" ]; then
+		case "$MODEM_POWER_CYCLE_OLD_MUX" in
+			0|1) write_gpio_mux "$MODEM_POWER_CYCLE_OLD_MUX" >/dev/null 2>&1 ;;
+		esac
+		write_modem_power 1 >/dev/null 2>&1
+	fi
+	MODEM_POWER_CYCLE_ACTIVE=0
+}
+
 cleanup_locks() {
+	recover_modem_power
 	end_at_transaction
 	if [ "$SIM_LOCK_HELD" = 1 ]; then
 		lock -u "$LOCK"
@@ -334,7 +350,7 @@ read_gpio_mux() {
 }
 
 write_gpio_mux() {
-	local value="$1"
+	local value="$1" actual
 	[ -w "$GPIO_SIM" ] || {
 		fail "SIM 复用 GPIO 不可用"
 		return 1
@@ -343,6 +359,8 @@ write_gpio_mux() {
 		fail "无法写入 SIM 复用 GPIO"
 		return 1
 	}
+	actual="$(read_gpio_mux)"
+	[ "$actual" = "$value" ] || { fail "SIM 复用 GPIO 读回不一致"; return 1; }
 }
 
 write_modem_power() {
@@ -382,19 +400,28 @@ wait_for_modem_port() {
 # numbering may change after a hard power cycle.  Probe every plausible port
 # and require both a basic AT response and a readable model identity before a
 # boot-time SIM operation is allowed to continue.
+sim_uptime_seconds() {
+	local seconds idle
+	read -r seconds idle < /proc/uptime
+	printf '%s\n' "${seconds%%.*}"
+}
+
 wait_for_modem_ready() {
-	local retries="${1:-$MODEM_PORT_WAIT_SECONDS}" section port response model seen
+	local retries="${1:-$MODEM_PORT_WAIT_SECONDS}" section port response model seen deadline
 
 	case "$retries" in
 		''|*[!0-9]*) retries="$MODEM_PORT_WAIT_SECONDS" ;;
 	esac
-	while [ "$retries" -gt 0 ]; do
+	deadline=$(( $(sim_uptime_seconds) + retries ))
+	while [ "$(sim_uptime_seconds)" -lt "$deadline" ]; do
+		[ ! -e "$SHUTDOWN_MARKER" ] || return 1
 		section="$(first_qmodem_section)"
 		seen=" "
 		for port in "$(resolve_port "$section")" \
 			/dev/ttyUSB1 /dev/ttyUSB2 /dev/ttyUSB0 /dev/ttyUSB3 \
 			/dev/ttyUSB4 /dev/ttyUSB5 /dev/ttyACM0 \
 			/dev/mhi_DUN /dev/wwan0at0; do
+			[ "$(sim_uptime_seconds)" -lt "$deadline" ] || break
 			[ -n "$port" ] && [ -c "$port" ] || continue
 			case "$seen" in *" $port "*) continue ;; esac
 			seen="$seen$port "
@@ -425,6 +452,12 @@ prepare_modem_boot() {
 		return 1
 	}
 	target_mux="$(gpio_sim_value "$slot")"
+	# A GPIO-only trial has no verified physical-slot name. Preserve its
+	# chosen mux through an ordinary reboot without inventing that mapping.
+	case "$(uci -q get c2000max.sim.last_forced_gpio 2>/dev/null)" in
+		0) target_mux=0 ;;
+		1) target_mux=1 ;;
+	esac
 	off_seconds="${C2000MAX_MODEM_POWER_OFF_SECONDS:-$MODEM_POWER_OFF_SECONDS}"
 	case "$off_seconds" in
 		''|*[!0-9]*) off_seconds="$MODEM_POWER_OFF_SECONDS" ;;
@@ -451,27 +484,109 @@ prepare_modem_boot() {
 	log "prepared modem boot (slot=$slot, mux=$target_mux, power-off=${off_seconds}s)"
 }
 
+# Universal GPIO change: remove modem power before moving the SIM mux,
+# then discover a fresh AT port. Do not retain the old port/global locks
+# while probing a re-enumerated USB modem.
+power_cycle_mux() {
+	local target_mux="$1" ready_port
+	case "$target_mux" in 0|1) ;; *) fail "无效 GPIO 电平"; return 1 ;; esac
+	[ ! -e "$SHUTDOWN_MARKER" ] || { fail "系统正在关机"; return 1; }
+	[ -w "$GPIO_SIM" ] && [ -w "$GPIO_POWER" ] || {
+		fail "SIM 或模组电源 GPIO 不可用"; return 1;
+	}
+	MODEM_RESTARTED_PORT=
+	MODEM_POWER_CYCLE_OLD_MUX="$(read_gpio_mux)"
+	# Close the old daemon reader under its transaction before USB disappears.
+	if [ -n "$AT_TRANSACTION_PORT" ]; then
+		qmodem_at_daemon_close "$AT_TRANSACTION_PORT" || {
+			fail "AT 守护进程未释放旧串口，未重启模组"; return 1;
+		}
+	fi
+	write_modem_power 0 || return 1
+	MODEM_POWER_CYCLE_ACTIVE=1
+	sleep "$MODEM_POWER_OFF_SECONDS"
+	if ! write_gpio_mux "$target_mux"; then
+		recover_modem_power
+		end_at_transaction
+		return 1
+	fi
+	sleep 1
+	[ ! -e "$SHUTDOWN_MARKER" ] || {
+		MODEM_POWER_CYCLE_ACTIVE=0
+		fail "系统关机已开始，模组保持断电"; return 1;
+	}
+	if ! write_modem_power 1; then recover_modem_power; end_at_transaction; return 1; fi
+	MODEM_POWER_CYCLE_ACTIVE=0
+	end_at_transaction
+	log "GPIO SIM mux selected under power-off (mux=$target_mux); waiting for modem AT"
+	ready_port="$(QMODEM_AT_LOCK_WAIT=2 wait_for_modem_ready 60)" || {
+		fail "模组已重新上电，但 AT 尚未恢复，请查看 USB/启动日志"; return 1;
+	}
+	begin_at_transaction "$ready_port" || {
+		fail "模组已恢复，但 AT 队列正忙"; return 1;
+	}
+	MODEM_RESTARTED_PORT="$ready_port"
+}
+
 force_gpio_slot() {
-	local requested="$1" slot target_mux current_mux
+	local requested="$1" slot target_mux section port model vendor before after cpin
+	local attempt=0 verification=unavailable
 	slot="$(normalize_slot "$requested")"
 	case "$slot" in
 		external1|external2) ;;
-		*)
-			fail "强制 GPIO 模式仅允许选择两个外置卡槽"
-			return 1
-			;;
+		*) fail "GPIO 模式仅支持 0/1 两种电平"; return 1 ;;
 	esac
 	target_mux="$(gpio_sim_value "$slot")"
-	[ -w "$GPIO_SIM" ] || {
-		fail "SIM 复用 GPIO 不可用"
+	section="$(first_qmodem_section)"
+	port="$(resolve_port "$section")"
+	vendor=unknown
+	if [ -n "$port" ] && [ -c "$port" ]; then
+		begin_at_transaction "$port" || { fail "AT 队列正忙，未切换 GPIO"; return 1; }
+		model="$(resolve_model "$section" "$port")"
+		vendor="$(resolve_vendor "$section" "$port" "$model")"
+		before="$(C2000MAX_SIM_QUERY_TIMEOUT=3 query_iccid "$vendor" "$port")"
+	fi
+	if ! power_cycle_mux "$target_mux"; then
+		if [ "$(read_gpio_mux)" = "$target_mux" ] && [ "$(cat "$GPIO_POWER" 2>/dev/null)" = 1 ]; then
+			uci -q set "c2000max.sim.last_forced_slot=$slot"
+			uci -q set "c2000max.sim.last_forced_gpio=$target_mux"
+			uci -q set "c2000max.sim.last_force_verification=unavailable"
+			uci -q commit c2000max
+		fi
 		return 1
-	}
-	current_mux="$(read_gpio_mux)"
-	write_gpio_mux "$target_mux" || return 1
+	fi
+	port="$MODEM_RESTARTED_PORT"
+	while [ "$attempt" -lt 6 ]; do
+		cpin="$(C2000MAX_SIM_QUERY_TIMEOUT=3 query_cpin "$port")"
+		after="$(C2000MAX_SIM_QUERY_TIMEOUT=3 query_iccid "$vendor" "$port")"
+		[ "$cpin" != READY ] || [ -z "$after" ] || break
+		sleep 2
+		attempt=$((attempt + 1))
+	done
+	SWITCH_MESSAGE="模组已断电重启并设置 GPIO48=$target_mux"
+	if [ "$cpin" = READY ] && [ -n "$after" ]; then
+		if [ -z "$before" ]; then
+			verification=readable
+			SWITCH_MESSAGE="$SWITCH_MESSAGE；SIM 已就绪，但缺少切换前 ICCID，实际换卡未确认"
+		elif [ "$before" != "$after" ]; then
+			verification=changed
+			SWITCH_MESSAGE="$SWITCH_MESSAGE；SIM 已就绪且 ICCID 已变化，已确认换卡"
+		else
+			verification=unchanged
+			SWITCH_MESSAGE="$SWITCH_MESSAGE；ICCID 未变化，未确认换卡，请检查模组内部 SIM 通道"
+		fi
+	else
+		SWITCH_MESSAGE="$SWITCH_MESSAGE；SIM 未就绪或 ICCID 不可读，实际换卡未确认"
+	fi
 	uci -q set "c2000max.sim.last_forced_slot=$slot"
 	uci -q set "c2000max.sim.last_forced_gpio=$target_mux"
+	uci -q set "c2000max.sim.last_force_verification=$verification"
 	uci -q commit c2000max
-	log "forced GPIO SIM mux: $current_mux -> $target_mux (requested=$slot, no modem AT command)"
+	log "GPIO SIM reboot result (mux=$target_mux, verification=$verification, port=$port)"
+	if [ "${C2000MAX_SIM_SKIP_REDIAL:-0}" != 1 ] &&
+	   [ -n "$section" ] && [ -x /etc/init.d/qmodem_network ]; then
+		/etc/init.d/qmodem_network redial "$section" >/dev/null 2>&1 &
+	fi
 }
 
 query_huawei_channel() {
@@ -544,7 +659,7 @@ query_hvsst() {
 }
 
 query_cpin() {
-	send_at "$1" 'AT+CPIN?' 2>/dev/null | tr -d '\r' |
+	send_at "$1" 'AT+CPIN?' "${C2000MAX_SIM_QUERY_TIMEOUT:-10}" 2>/dev/null | tr -d '\r' |
 		sed -n 's/.*+CPIN:[[:space:]]*//p' | sed -n '1p'
 }
 
@@ -565,7 +680,7 @@ query_iccid() {
 		*) commands='AT+CCID AT+ICCID?' ;;
 	esac
 	for command in $commands; do
-		response="$(send_at "$port" "$command" 2>/dev/null)"
+		response="$(send_at "$port" "$command" "${C2000MAX_SIM_QUERY_TIMEOUT:-10}" 2>/dev/null)"
 		iccid="$(extract_iccid "$response")"
 		[ -n "$iccid" ] && {
 			echo "$iccid"
@@ -658,11 +773,8 @@ switch_fibocom() {
 
 	# For a GPIO-only change the active SIM2 interface must first be powered down.
 	if [ "$current_channel" = 2 ] && [ "$target_channel" = 2 ]; then
-		send_at "$port" 'AT+CFUN=0' >/dev/null 2>&1
-		sleep 2
-		write_gpio_mux "$target_mux" || return 1
-		send_at "$port" 'AT+CFUN=1' >/dev/null 2>&1
-		return 0
+		power_cycle_mux "$target_mux"
+		return $?
 	fi
 
 	# When entering channel 2, prepare the inactive mux before switching. When
@@ -686,11 +798,8 @@ switch_quectel() {
 	[ "$current_channel" = "$target_channel" ] && [ "$current_mux" = "$target_mux" ] && return 0
 
 	if [ "$current_channel" = 2 ] && [ "$target_channel" = 2 ]; then
-		send_at "$port" 'AT+CFUN=0' >/dev/null 2>&1
-		sleep 2
-		write_gpio_mux "$target_mux" || return 1
-		send_at "$port" 'AT+CFUN=1' >/dev/null 2>&1
-		return 0
+		power_cycle_mux "$target_mux"
+		return $?
 	fi
 
 	[ "$target_channel" != 2 ] || write_gpio_mux "$target_mux" || return 1
@@ -707,6 +816,10 @@ switch_meig() {
     case "$current_channel" in 1|2) ;; *) return 1 ;; esac
     current_mux="$(read_gpio_mux)"
     [ "$current_channel" = "$target_channel" ] && [ "$current_mux" = "$target_mux" ] && return 0
+    if [ "$current_channel" = 2 ] && [ "$target_channel" = 2 ]; then
+        power_cycle_mux "$target_mux"
+        return $?
+    fi
     # SRM825 dual-SIM support is a firmware option. Probe before any mutation.
     response="$(send_at "$port" 'AT^SIMSLOT=?' 2>/dev/null)"
     printf '%s\n' "$response" | tr -d ' \r' | grep -q '^\^SIMSLOT:(1[-,]2)$' || return 1
@@ -748,6 +861,7 @@ wait_for_route() {
 apply_slot() {
 	local requested="$1" slot section port model vendor target_mux target_channel
 	SWITCH_MESSAGE=""
+	MODEM_RESTARTED_PORT=
 	HUAWEI_ACTIVATION_WARNING=0
 	slot="$(normalize_slot "$requested")"
 	[ -n "$slot" ] || {
@@ -787,6 +901,7 @@ apply_slot() {
 	esac
 	[ -z "$LAST_ERROR" ] || return 1
 
+	[ -z "$MODEM_RESTARTED_PORT" ] || port="$MODEM_RESTARTED_PORT"
 	wait_for_route "$vendor" "$port" "$slot" || fail "切换后的 GPIO/模组槽位校验失败"
 	[ -z "$LAST_ERROR" ] || return 1
 	if [ "$vendor" = huawei ] && [ "$HUAWEI_ACTIVATION_WARNING" = 1 ]; then
@@ -795,6 +910,7 @@ apply_slot() {
 	uci -q set "c2000max.sim.slot=$slot"
 	uci -q delete c2000max.sim.last_forced_slot
 	uci -q delete c2000max.sim.last_forced_gpio
+	uci -q delete c2000max.sim.last_force_verification
 	uci -q commit c2000max
 	# The physical switch has already been verified. A flash-environment write
 	# failure must be visible in logs, but must never roll back a working SIM.
@@ -876,6 +992,7 @@ status_json() {
 	json_add_string carrier "${carrier:-未知运营商}"
 	json_add_string forced_slot "${forced_slot:-}"
 	json_add_string forced_gpio "${forced_gpio:-}"
+	json_add_string force_verification "$(uci -q get c2000max.sim.last_force_verification 2>/dev/null)"
 	json_dump
 }
 
@@ -968,6 +1085,20 @@ case "$command" in
 		}
 		C2000MAX_SIM_SKIP_REDIAL=1
 		export C2000MAX_SIM_SKIP_REDIAL
+		# GPIO-only selection cannot be translated into a physical card name.
+		# Early boot already restored that mux. Do not overwrite it here using
+		# the older three-slot selection saved before the GPIO trial.
+		forced_gpio="$(uci -q get c2000max.sim.last_forced_gpio 2>/dev/null)"
+		case "$forced_gpio" in
+			0|1)
+				if [ "$(read_gpio_mux)" = "$forced_gpio" ]; then
+					status_json 1 "已恢复 GPIO48=$forced_gpio；实际 SIM 卡槽请核对 ICCID"
+					exit 0
+				fi
+				status_json 0 "开机 GPIO 恢复读回不一致"
+				exit 1
+				;;
+		esac
 		if apply_slot "$slot"; then
 			sleep 2
 			status_json 1 "${SWITCH_MESSAGE:-已恢复保存的 SIM 卡槽}"
@@ -1026,7 +1157,7 @@ case "$command" in
 		trap cleanup_locks EXIT
 		trap 'exit 128' INT TERM
 		if force_gpio_slot "$slot"; then
-			serialized_status_json 1 "GPIO 电平已写入并读回；实际 SIM 换卡未确认，需核对切换前后 ICCID"
+			serialized_status_json 1 "$SWITCH_MESSAGE"
 		else
 			serialized_status_json 0 "${LAST_ERROR:-强制 GPIO 切换失败}"
 			exit 1
