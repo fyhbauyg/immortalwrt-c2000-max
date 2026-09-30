@@ -60,6 +60,7 @@ assert_eq MT5700M-CN "$model" 'uncached AT identity'
 assert_eq huawei "$(resolve_vendor '' /dev/mock "$model")" 'uncached uppercase MT5700 auto detection'
 assert_eq huawei "$(resolve_vendor 2_1 /dev/mock mt5700m-cn)" 'cached lowercase identity'
 assert_eq fibocom "$(resolve_vendor '' /dev/mock FM350-GL)" 'uppercase Fibocom model'
+assert_eq fibocom "$(resolve_vendor '' /dev/mock FM150AE)" 'FM150 model without manufacturer'
 assert_eq quectel "$(resolve_vendor '' /dev/mock RM520N-GL)" 'uppercase Quectel model'
 FAKE_AT_MANUFACTURER=HUAWEI
 assert_eq huawei "$(resolve_vendor '' /dev/mock unknown-model)" 'CGMI uppercase manufacturer fallback'
@@ -72,6 +73,14 @@ FAKE_VENDOR=auto
 assert_eq 1 "$(query_fibocom_channel /dev/mock)" 'Fibocom lowercase MAIN fallback'
 FAKE_FIBOCOM='+GTDUALSIM: sub'
 assert_eq 2 "$(query_fibocom_channel /dev/mock)" 'Fibocom lowercase SUB fallback'
+
+# Unknown SIM commands must never switch GPIO based only on manufacturer.
+FAKE_FIBOCOM='+GTDUALSIM: 0,1,1'
+assert_eq '' "$(query_fibocom_channel /dev/mock)" 'unrecognized multi-field response'
+FAKE_FIBOCOM=ERROR
+write_gpio_mux() { fail_test 'unsupported Fibocom wrote GPIO'; }
+log() { :; }
+if switch_fibocom /dev/mock 2 0; then fail_test 'unsupported Fibocom accepted'; fi
 
 # A failed GPIO write may race shutdown. Recovery may restore power only if
 # shutdown has not started; every GPIO/power operation below is a mock.

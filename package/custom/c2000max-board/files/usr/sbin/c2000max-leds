@@ -324,17 +324,37 @@ get_at_port() {
 	echo "$port"
 }
 
+parse_rsrp() {
+	# Normalize complete numeric samples, including optional units. Reject
+	# sentinel values; use the NR serving leg before LTE in NSA.
+	jq -rs '[.[] | .modem_info[]? |
+		select((.key // "" | ascii_downcase | gsub("[[:space:]]"; "")) == "rsrp") |
+		{raw: (.value | tostring | gsub("−"; "-") |
+			gsub("^[[:space:]]+|[[:space:]]+$"; "") |
+			sub("[[:space:]]*[dD][bB][mM]$"; "")),
+		 nr: ((.extra_info // "") | test("^(NR|5G)"; "i"))} |
+		select(.raw | test("^-?[0-9]+([.][0-9]+)?$")) |
+		.v = (.raw | tonumber) | select(.v >= -156 and .v <= -31)] |
+		sort_by(.nr) | reverse | .[0].v // empty' 2>/dev/null |
+		awk 'NF { printf "%.0f\n", $1; exit }'
+}
+
 get_rsrp() {
-	local section="$1" value
-	# Do not leave the LED loop blocked behind a SIM transaction.
-	# Prefer the NR leg in NSA, falling back to LTE only when NR is absent.
-	# Reject modem sentinel values and preserve decimal samples until rounding.
-	value="$(QMODEM_AT_LOCK_WAIT=1 /usr/share/qmodem/modem_ctrl.sh cell_info "$section" 2>/dev/null |
-		jq -r '[.modem_info[]? | select((.key // "" | ascii_downcase) == "rsrp") |
-			{v: (try (.value | tonumber) catch null), nr: ((.extra_info // "") | test("^(NR|5G)"; "i"))} |
-			select(.v != null and .v >= -156 and .v <= -31)] |
-			sort_by(.nr) | reverse | .[0].v // empty' 2>/dev/null)"
-	[ -n "$value" ] && awk -v v="$value" 'BEGIN { printf "%.0f\n", v }'
+	local section="$1" value cache now modified age
+	case "$section" in ''|*[!A-Za-z0-9_]*) return 1 ;; esac
+	cache="${C2000MAX_MODEM_CACHE_DIR:-/tmp}/cache_cell_info_$section"
+	# Share a recent, complete sample with the dashboard instead of competing
+	# for AT every time the LEDs refresh. Expired or invalid samples are retried.
+	now="$(date +%s)"
+	modified="$(stat -c %Y "$cache" 2>/dev/null)"
+	case "$now:$modified" in *[!0-9:]*|*:) age=999 ;;
+		*) age=$((now - modified)) ;;
+	esac
+	if [ "$age" -ge 0 ] && [ "$age" -le 45 ]; then
+		value="$(parse_rsrp < "$cache")"
+		[ -z "$value" ] || { printf '%s\n' "$value"; return 0; }
+	fi
+	QMODEM_AT_LOCK_WAIT=1 /usr/share/qmodem/modem_ctrl.sh cell_info "$section" 2>/dev/null | parse_rsrp
 }
 
 data_online() {

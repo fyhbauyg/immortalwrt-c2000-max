@@ -72,7 +72,7 @@ return view.extend({
 		if (data.forced_slot) {
 			table.appendChild(E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td left' }, _('最近一次强制 GPIO 操作')),
-				E('td', { 'class': 'td left' }, _('%s，GPIO48=%s（未执行模组 AT 切换）').format(slotNames[data.forced_slot] || data.forced_slot, value(data.forced_gpio, '-')))
+				E('td', { 'class': 'td left' }, _('GPIO48=%s（仅修改复用器，实际换卡未确认）').format(value(data.forced_gpio, '-')))
 			]));
 		}
 
@@ -91,11 +91,11 @@ return view.extend({
 				'class': 'btn cbi-button cbi-button-negative',
 				'type': 'button',
 				'click': ui.createHandlerFn(this, 'handleForce', slot)
-			}, _('强制 GPIO 切换到') + slotNames[slot]));
+			}, _('设置 GPIO48=%s（%s）').format(slot === 'external1' ? '0' : '1', slot === 'external1' ? _('低电平') : _('高电平'))));
 		}, this));
 		var forceBox = E('div', { 'class': 'alert-message warning', 'style': 'margin-top:1em' }, [
-			E('strong', {}, _('不受支持模组的强制切换：')),
-			E('span', {}, _('只写入 CPE-Sel0 / GPIO48，不检测模组型号、不发送 SIM 切换 AT 命令，也不校验实际卡槽。GPIO 高电平路径还可能对应内置贴片卡；操作后若模组未重新识别 SIM，请手动复位模组。')),
+			E('strong', {}, _('SIM 复用器调试：')),
+			E('span', {}, _('仅修改 CPE-Sel0 / GPIO48，不切换模组的 SIM 通道，也不确认实际卡槽。模组通道 1 激活时，修改复用 GPIO 可能没有效果；通道 2 激活时，高电平路径按当前板级映射对应内置卡。请用切换前后 ICCID 核验。')),
 			forceButtons
 		]);
 
@@ -134,7 +134,7 @@ return view.extend({
 		ev.currentTarget.blur();
 		ui.showModal(_('确认强制 GPIO 切换'), [
 			E('p', {}, _('该操作会绕过模组型号与 AT 能力检查，直接改写 GPIO48。当前蜂窝连接可能立即中断，并且页面显示的卡槽无法通过不受支持模组自动校验。')),
-			E('p', {}, _('目标：%s').format(slotNames[slot] || slot)),
+			E('p', {}, _('目标 GPIO48=%s；实际卡槽需另行确认').format(slot === 'external1' ? '0' : '1')),
 			E('div', { 'class': 'right' }, [
 				E('button', {
 					'class': 'btn',

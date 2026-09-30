@@ -172,7 +172,7 @@ resolve_vendor() {
 	identity="$(printf '%s %s' "$manufacturer" "$model" | tr 'A-Z' 'a-z')"
 	case "$identity" in
 		*huawei*|*tdtech*|*td\ tech*|*mt5700*) echo huawei; return ;;
-		*fibocom*|*fm350*) echo fibocom; return ;;
+		*fibocom*|*fm350*|*fm150*) echo fibocom; return ;;
 		*quectel*|*rm520*) echo quectel; return ;;
 		*meig*|*srm825*|*srm815*) echo meig; return ;;
 	esac
@@ -181,7 +181,7 @@ resolve_vendor() {
 	identity="$(printf '%s %s' "$manufacturer" "$model" | tr 'A-Z' 'a-z')"
 	case "$identity" in
 		*huawei*|*tdtech*|*td\ tech*|*mt5700*) echo huawei ;;
-		*fibocom*|*fm350*) echo fibocom ;;
+		*fibocom*|*fm350*|*fm150*) echo fibocom ;;
 		*quectel*|*rm520*) echo quectel ;;
 		*meig*|*srm825*|*srm815*) echo meig ;;
 		*) echo unknown ;;
@@ -487,22 +487,13 @@ query_huawei_channel() {
 }
 
 query_fibocom_channel() {
-	local response value
-	response="$(send_at "$1" 'AT+GTDUALSIM?' 2>/dev/null | tr -d '\r')"
-	value="$(printf '%s\n' "$response" |
-		sed -n 's/.*+GTDUALSIM:[[:space:]]*\([01]\).*/\1/p' | sed -n '1p')"
-	# A few older Fibocom firmware branches report MAIN/SUB instead of the
-	# numeric FM350 format. Accept both without changing the canonical mapping.
-	if [ -z "$value" ]; then
-		case "$(printf '%s\n' "$response" | tr 'a-z' 'A-Z')" in
-			*+GTDUALSIM:*MAIN*) value=0 ;;
-			*+GTDUALSIM:*SUB*) value=1 ;;
-		esac
-	fi
-	case "$value" in
-		0) echo 1 ;;
-		1) echo 2 ;;
-	esac
+	# Accept only the known single-selector format. A multi-field response
+	# from another firmware is not evidence of the FM350 channel mapping.
+	send_at "$1" 'AT+GTDUALSIM?' 2>/dev/null | tr -d '\r' | tr 'a-z' 'A-Z' |
+		sed -n -e 's/^[[:space:]]*+GTDUALSIM:[[:space:]]*0[[:space:]]*$/1/p' \
+		-e 's/^[[:space:]]*+GTDUALSIM:[[:space:]]*1[[:space:]]*$/2/p' \
+		-e 's/^[[:space:]]*+GTDUALSIM:[[:space:]]*MAIN[[:space:]]*$/1/p' \
+		-e 's/^[[:space:]]*+GTDUALSIM:[[:space:]]*SUB[[:space:]]*$/2/p' | sed -n '1p'
 }
 
 query_quectel_channel() {
@@ -658,6 +649,10 @@ switch_fibocom() {
 	local port="$1" target_channel="$2" target_mux="$3"
 	local current_channel current_mux target_value response
 	current_channel="$(query_fibocom_channel "$port")"
+	case "$current_channel" in
+		1|2) ;;
+		*) fail "模组未返回可识别的 GTDUALSIM 通道，无法确认双 SIM 能力，未切换 GPIO"; return 1 ;;
+	esac
 	current_mux="$(read_gpio_mux)"
 	[ "$current_channel" = "$target_channel" ] && [ "$current_mux" = "$target_mux" ] && return 0
 
@@ -786,7 +781,7 @@ apply_slot() {
 	target_channel="$(module_channel "$slot")"
 	case "$vendor" in
 		huawei) switch_huawei "$port" "$target_channel" "$target_mux" || fail "MT5700 SIM 切换命令失败" ;;
-		fibocom) switch_fibocom "$port" "$target_channel" "$target_mux" || fail "FM350 SIM 切换命令失败" ;;
+		fibocom) switch_fibocom "$port" "$target_channel" "$target_mux" || fail "广和通 SIM 切换失败（需固件支持当前双 SIM 命令）" ;;
 		quectel) switch_quectel "$port" "$target_channel" "$target_mux" || fail "RM520 SIM 切换命令失败" ;;
 		meig) switch_meig "$port" "$target_channel" "$target_mux" || fail "美格 SIM 切换失败，请确认模组固件支持双 SIM" ;;
 	esac
@@ -1031,7 +1026,7 @@ case "$command" in
 		trap cleanup_locks EXIT
 		trap 'exit 128' INT TERM
 		if force_gpio_slot "$slot"; then
-			serialized_status_json 1 "GPIO 已强制切换；未发送任何模组 AT 命令，必要时请手动复位模组"
+			serialized_status_json 1 "GPIO 电平已写入并读回；实际 SIM 换卡未确认，需核对切换前后 ICCID"
 		else
 			serialized_status_json 0 "${LAST_ERROR:-强制 GPIO 切换失败}"
 			exit 1
