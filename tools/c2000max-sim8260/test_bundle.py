@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description='Exercise the hotfix installer agai
 parser.add_argument('--bundle', required=True, type=Path)
 parser.add_argument('--jq', required=True, type=Path)
 parser.add_argument('--shell', default='bash')
-parser.add_argument('--baseline', default='7288f8dbb1')
+parser.add_argument('--baseline', default='b65c38c71e')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 bundle = args.bundle.resolve()
@@ -119,7 +119,9 @@ at_timeout() {
     assert state['qmodem.2_1.apn']=='auto' and state['qmodem.other.apn']=='custom-preserved'
     table=json.loads((root/'usr/share/qmodem/modem_support.json').read_text())
     original_table=json.loads(oldtable)
-    table['modem_support']['usb'].pop('simcom_sim8260g-m2'); table['modem_support']['usb'].pop('sim8260g-m2')
+    for candidate in [table,original_table]:
+        for name in ['simcom_sim8260g-m2','sim8260g-m2']:
+            candidate['modem_support']['usb'].pop(name,None)
     assert table==original_table
     assert (root/'services').read_text().splitlines()==['qmodem_init stop','qmodem_init start','qmodem_network redial 2_1']
     first_backup=next((root/'root').glob('c2000max-sim8260-backup-*'))
@@ -128,7 +130,8 @@ at_timeout() {
     rollback=subprocess.run([args.shell,str(first_backup/'rollback.sh'),str(first_backup)],env=env,text=True,capture_output=True,timeout=12)
     assert rollback.returncode==0,rollback
     for path,blob in initial.items(): assert (root/path).read_bytes()==blob
-    assert not (root/'usr/share/qmodem/pdp_address.sh').exists()
+    for path,_,_ in [line.split() for line in (local/'allowed-files.txt').read_text().splitlines()]:
+        if path not in initial: assert not (root/path).exists()
     assert (root/'usr/share/qmodem/modem_support.json').read_bytes()==oldtable
     assert (root/'etc/config/qmodem').read_text()=='original qmodem with user settings\n'
 
@@ -140,7 +143,9 @@ at_timeout() {
     root,local,env=fixture('failed-stop',True)
     result=subprocess.run([args.shell,str(local/'install.sh'),'2_1'],env=env,text=True,capture_output=True,timeout=12)
     assert result.returncode!=0 and (root/'usr/share/qmodem/modem_support.json').read_bytes()==oldtable,result
-    assert not (root/'usr/share/qmodem/pdp_address.sh').exists()
+    for path,original,_ in [line.split() for line in (local/'allowed-files.txt').read_text().splitlines()]:
+        if original=='absent': assert not (root/path).exists()
+        else: assert hashlib.sha256((root/path).read_bytes()).hexdigest()==original
 
     root,local,env=fixture('diagnostic')
     result=subprocess.run([args.shell,str(local/'diagnose.sh'),'2_1'],env=env,text=True,capture_output=True,timeout=15)

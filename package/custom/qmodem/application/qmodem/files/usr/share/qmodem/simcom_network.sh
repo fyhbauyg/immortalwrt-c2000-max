@@ -62,6 +62,33 @@ simcom_at_succeeded()
     ! fm350_response_has_error "$1"
 }
 
+# Both CGDCONT and CGCONTRDP expose the APN in their third CSV field.
+simcom_pdp_apn()
+{
+    awk -F ',' -v tag="$1" -v cid="$2" '
+        {
+            record=$1
+            gsub(/^[ 	]+|[ 	]+$/, "", record)
+            prefix="+" tag ":"
+            if (index(record, prefix) != 1) next
+            record=substr(record, length(prefix) + 1)
+            gsub(/[ 	]/, "", record)
+            if (record != cid) next
+            value=$3
+            gsub(/^[ \t]+|[ \t\r]+$/, "", value)
+            gsub(/^"|"$/, "", value)
+            print value; exit
+        }'
+}
+
+simcom_is_data_apn()
+{
+    case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+    case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+        ims|ims.*|sos|sos.*|emergency|emergency.*|v2x*) return 1 ;;
+    esac
+}
+
 simcom_netact_set()
 {
     local state="$1" response rc
@@ -69,7 +96,7 @@ simcom_netact_set()
     response=$(at_timeout "$at_port" "AT+NETACT=$state" 8 2>&1)
     rc=$?
     if [ "$rc" != 0 ] || ! simcom_at_succeeded "$response"; then
-        m_debug "SIM8260 NETACT=$state rejected or timed out (rc=$rc)"
+        m_debug "SIM8260 NETACT=$state failed (rc=$rc); response=$(printf '%s' "$response" | tr -d '\r' | tr '\n' ' ' | cut -c 1-200)"
         return 1
     fi
 }
@@ -77,6 +104,7 @@ simcom_netact_set()
 simcom_rndis_dial()
 {
     local cid="${pdp_index:-6}" type apn_value response context_exists=0 command
+    local contexts selected_apn runtime_apn candidate_apn
     fm350_is_uint "$cid" && [ "$cid" -ge 1 ] && [ "$cid" -le 16 ] || return 1
     type=$(printf '%s' "${pdp_type:-ipv4v6}" | tr 'a-z' 'A-Z')
     case "$type" in IPV4) type=IP ;; IP|IPV6|IPV4V6) ;; *) return 1 ;; esac
@@ -86,15 +114,37 @@ simcom_rndis_dial()
         m_debug "SIM8260 APN contains invalid characters"; return 1 ;;
     esac
 
-    # With automatic APN, keep an existing context exactly as the modem reports it.
-    # The manual NETACT example uses CID 6; this is the new profile suggestion.
-    # An explicit user CID is retained and must match the modem data-call setup.
+    # The manual NETACT example uses CID 6; an explicit user CID is retained.
+    # NAS registration can assign CID 1 an effective APN while CGDCONT reports
+    # an empty string. An inactive RNDIS context cannot always inherit it itself.
     response=$(at_timeout "$at_port" 'AT+CGDCONT?' 8 2>&1) || return 1
     simcom_at_succeeded "$response" || return 1
+    contexts="$response"
+    selected_apn=$(printf '%s\n' "$contexts" | simcom_pdp_apn CGDCONT "$cid")
     if printf '%s\n' "$response" | awk -F '[,:]' -v cid="$cid" '
         /^[ \t]*\+CGDCONT:/ && $2 + 0 == cid + 0 { found=1 }
         END { exit !found }'; then
         context_exists=1
+    fi
+    if [ -z "$apn_value" ] && [ "$cid" != 1 ]; then
+        response=$(at_timeout "$at_port" "AT+CGCONTRDP=$cid" 8 2>&1) || return 1
+        runtime_apn=""
+        if simcom_at_succeeded "$response"; then
+            runtime_apn=$(printf '%s\n' "$response" | simcom_pdp_apn CGCONTRDP "$cid")
+        fi
+        # Preserve an already active selected context. Only an inactive context
+        # may inherit the operator's currently assigned primary data APN.
+        if ! simcom_is_data_apn "$runtime_apn"; then
+            response=$(at_timeout "$at_port" 'AT+CGCONTRDP=1' 8 2>&1) || return 1
+            candidate_apn=""
+            if simcom_at_succeeded "$response"; then
+                candidate_apn=$(printf '%s\n' "$response" | simcom_pdp_apn CGCONTRDP 1)
+            fi
+            if simcom_is_data_apn "$candidate_apn" && [ "$candidate_apn" != "$selected_apn" ]; then
+                apn_value="$candidate_apn"
+                m_debug "SIM8260 automatic APN from active CID 1: $apn_value; apply to inactive CID $cid"
+            fi
+        fi
     fi
     if [ -n "$apn_value" ] || [ "$context_exists" = 0 ]; then
         command="AT+CGDCONT=$cid,\"$type\""

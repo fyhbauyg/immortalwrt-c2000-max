@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='sim8260-activation-test-') as temp:
     temp=Path(temp)
     for scenario in ['success','rejected','timeout','hang-failed','interrupted','disabled','ubus-failed','restore-failed']:
         root=temp/scenario
-        for d in ['bin','tmp','etc/init.d','dev','usr/share/qmodem','var/run/qmodem/2_1_dir']:
+        for d in ['bin','tmp','etc/init.d','dev','usr/share/qmodem','var/run/qmodem/2_1_dir','sys/class/net/usb0']:
             (root/d).mkdir(parents=True,exist_ok=True)
         (root/'dev/ttyUSB2').touch()
         (root/'var/run/qmodem/2_1_dir/dial_log').write_text('old dial trace\npassword=SECRET\nIMEI: 123456789012345\n')
@@ -33,7 +33,7 @@ if [ -f "$MOCK_ROOT/running" ]; then state=true; else state=false; fi
 printf '{"qmodem_network":{"instances":{"modem_2_1":{"running":%s}}}}\n' "$state"
 ''')
         for name in ['ip','ping','nslookup']:
-            executable(root/'bin'/name, '#!/bin/sh\necho "'+name+' $*"\n')
+            executable(root/'bin'/name, '#!/bin/sh\n[ -f "$MOCK_ROOT/running" ] || exit 7\necho "'+name+' $*" >> "$MOCK_ROOT/host-events"\necho "'+name+' $*"\n')
         executable(root/'etc/init.d/qmodem_network', '''#!/bin/sh
 echo "$*" >> "$MOCK_ROOT/events"
 case "$1" in
@@ -75,10 +75,14 @@ esac
         elif scenario in ['interrupted','restore-failed']:
             assert result.returncode!=0 and commands.count('AT+NETACT=1|30')==1
             if scenario=='restore-failed': assert 'Failed to restore dialer' in result.stderr
+            assert not (root/'host-events').exists()
         else:
             assert result.returncode==0,result
             assert commands.count('AT+NETACT=1|30')==1
             assert len(commands)==12,commands
+            assert (root/'host-events').exists()
+            assert 'ping -I usb0' in (root/'host-events').read_text()
+            assert report.index('restore_exit=0') < report.index('--- Host connectivity after restoring target dialer')
             assert not any('CGDCONT=' in c or 'CFUN=' in c or 'CUSBCFG=' in c for c in commands)
             if scenario=='rejected': assert '+CME ERROR: 30' in report
             if scenario=='timeout': assert 'response timeout' in report and 'exit=1' in report

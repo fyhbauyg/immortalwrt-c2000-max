@@ -42,6 +42,8 @@ at_timeout() {{
   printf '%s\n' "$2" >> "$events"
   case "$2" in
     'AT+CGDCONT?') printf '%s\r\n' "${{CONTEXTS:-+CGDCONT: 6,\"IPV4V6\",\"existing-apn\",\"0.0.0.0\"}}" OK ;;
+    'AT+CGCONTRDP=1') printf '%s\r\n' "${{PRIMARY_RUNTIME:-}}" OK; return "${{RUNTIME_RC:-0}}" ;;
+    'AT+CGCONTRDP='*) printf '%s\r\n' "${{SELECTED_RUNTIME:-}}" OK; return "${{RUNTIME_RC:-0}}" ;;
     'AT+NETACT?') printf '+NETACT: %s\r\nOK\r\n' "${{NETACT:-1}}" ;;
     'AT+CGPADDR='*) printf '%s\r\n' "${{IP_REPLY:-+CGPADDR: 6,\"192.0.2.10\"}}" OK ;;
     'AT+NETACT=1') printf '%s\r\n' "${{DIAL_REPLY:-OK}}"; return "${{DIAL_RC:-0}}" ;;
@@ -74,11 +76,11 @@ at_timeout() {{
         output, _ = run('printf %s '+shlex.quote(raw)+' | simcom_usb_product')
         assert output.strip() == want
     output, events = run('at_dial')
-    assert events == ['AT+CGDCONT?', 'AT+NETACT=1'], events  # No APN/type overwrite or CNMP reset.
+    assert events == ['AT+CGDCONT?', 'AT+CGCONTRDP=6', 'AT+CGCONTRDP=1', 'AT+NETACT=1'], events  # No APN/type overwrite or CNMP reset.
     output, events = run("apn=\"\"; at_dial")
-    assert events == ['AT+CGDCONT?', 'AT+NETACT=1'], events
+    assert events == ['AT+CGDCONT?', 'AT+CGCONTRDP=6', 'AT+CGCONTRDP=1', 'AT+NETACT=1'], events
     output, events = run("CONTEXTS='+CGDCONT: 1,\"IP\",\"operator-default\"'; at_dial")
-    assert events == ['AT+CGDCONT?', 'AT+CGDCONT=6,"IPV4V6"', 'AT+NETACT=1'], events
+    assert events == ['AT+CGDCONT?', 'AT+CGCONTRDP=6', 'AT+CGCONTRDP=1', 'AT+CGDCONT=6,"IPV4V6"', 'AT+NETACT=1'], events
     output, events = run('apn=example.apn; at_dial')
     assert events == ['AT+CGDCONT?', 'AT+CGDCONT=6,"IPV4V6","example.apn"', 'AT+NETACT=1'], events
     output, events = run("DEFINE_REPLY='ERROR'; apn=example.apn; at_dial; echo rc=$?")
@@ -86,6 +88,35 @@ at_timeout() {{
     for body in ["DIAL_REPLY='ERROR'", "DIAL_REPLY='+CME ERROR: 30'", 'DIAL_RC=124']:
         output, _ = run(body+'; at_dial; echo rc=$?')
         assert 'rc=1' in output
+    # Use the real diagnostic shape (addresses replaced with documentation ranges).
+    primary='+CGCONTRDP: 1,5,"3gnet",192.0.2.10,2001:db8::1,,192.0.2.53,192.0.2.54'
+    contexts='+CGDCONT: 1,"IPV4V6","","0.0.0.0"\r\n+CGDCONT: 6,"IPV4V6","","0.0.0.0"'
+    output, events=run('CONTEXTS='+shlex.quote(contexts)+'; PRIMARY_RUNTIME='+shlex.quote(primary)+'; at_dial')
+    assert events==['AT+CGDCONT?', 'AT+CGCONTRDP=6', 'AT+CGCONTRDP=1', 'AT+CGDCONT=6,"IPV4V6","3gnet"', 'AT+NETACT=1'],events
+    for raw,expected in [(primary,'3gnet'),('+CGCONTRDP: 2,5,"ims",192.0.2.10',''),('AT+CGCONTRDP=1\r\nOK',''),('+CGCONTRDP: 1,5,"",192.0.2.10','')]:
+        output,_=run('printf %s '+shlex.quote(raw)+' | simcom_pdp_apn CGCONTRDP 1')
+        assert output.strip()==expected,(raw,output)
+    # An active selected context, explicit APN/CID and already correct APN are preserved.
+    output,events=run('SELECTED_RUNTIME=\'+CGCONTRDP: 6,5,"private.apn",192.0.2.20\'; PRIMARY_RUNTIME='+shlex.quote(primary)+'; at_dial')
+    assert events==['AT+CGDCONT?','AT+CGCONTRDP=6','AT+NETACT=1'],events
+    output,events=run('CONTEXTS=\'+CGDCONT: 6,"IPV4V6","3gnet","0.0.0.0"\'; PRIMARY_RUNTIME='+shlex.quote(primary)+'; at_dial')
+    assert not any(c.startswith('AT+CGDCONT=') for c in events),events
+    # A new SIM's assigned primary APN refreshes an inactive secondary context.
+    output,events=run('CONTEXTS=\'+CGDCONT: 6,"IPV4V6","3gnet","0.0.0.0"\'; PRIMARY_RUNTIME=\'+CGCONTRDP: 1,5,"cmnet",192.0.2.10\'; at_dial')
+    assert 'AT+CGDCONT=6,"IPV4V6","cmnet"' in events,events
+    for bad in ['ims','ims.operator','sos','emergency','v2x_ip','bad;apn','bad apn']:
+        output,events=run('PRIMARY_RUNTIME='+shlex.quote('+CGCONTRDP: 1,5,"'+bad+'",192.0.2.10')+'; at_dial')
+        assert not any(c.startswith('AT+CGDCONT=') for c in events),events
+    output,events=run('pdp_index=3; CONTEXTS=\'+CGDCONT: 3,"IP","","0.0.0.0"\'; PRIMARY_RUNTIME='+shlex.quote(primary)+'; at_dial')
+    assert 'AT+CGCONTRDP=3' in events and 'AT+CGDCONT=3,"IPV4V6","3gnet"' in events,events
+    output,events=run('pdp_index=1; CONTEXTS=\'+CGDCONT: 1,"IPV4V6","","0.0.0.0"\'; at_dial')
+    assert events==['AT+CGDCONT?','AT+NETACT=1'],events
+    output,events=run('PRIMARY_RUNTIME='+shlex.quote(primary)+'; DEFINE_REPLY=ERROR; at_dial; echo rc=$?')
+    assert 'rc=1' in output and 'AT+NETACT=1' not in events
+    output,events=run('RUNTIME_RC=75; at_dial; echo rc=$?')
+    assert 'rc=1' in output and not any(c.startswith('AT+CGDCONT=') for c in events)
+    output,_=run('m_debug() { echo "$1"; }; DIAL_REPLY=ERROR; at_dial; echo rc=$?')
+    assert 'response=ERROR' in output and 'rc=1' in output,output
     output, events = run('ecm_hang')
     assert events == ['AT+NETACT=0'], events
     for ip, state, v4, v6 in [

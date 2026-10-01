@@ -1,5 +1,5 @@
 #!/bin/sh
-# Verified C2000MAX QModem r15/r16 patch; run diagnose.sh before installation.
+# Verified C2000MAX QModem r16/r17 patch; run diagnose.sh before installation.
 # OpenWrt libraries use optional unset variables (including IPKG_INSTROOT).
 # Keep failure checking without imposing nounset on the sourced libraries.
 set -e

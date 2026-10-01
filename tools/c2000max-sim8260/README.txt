@@ -1,6 +1,15 @@
-SIM8260G-M2 识别与 RNDIS 拨号测试补丁 R2（2026-10-01）
+SIM8260G-M2 识别与 RNDIS 拨号测试补丁 R3（2026-10-01）
 
-安装脚本 R2 修正
+R3 拨号修正
+- 实机 NETACT=1 等待约 6 秒后返回 ERROR，30 秒等待仍无法激活。
+- CGCONTRDP=1 显示当前运营商分配的实际 APN；所选 CID 6 的 APN 为空且没有活动记录。
+- 自动 APN 时，仅给尚未激活的所选上下文继承当前 CID 1 的有效数据 APN。
+  不硬编码手册中的 APN，不修改 UCI 的自动 APN 或用户指定的 CID。
+- 保留已激活的所选上下文；不继承 IMS、SOS、emergency 或 V2X 专用 APN。
+- NETACT 失败日志保存原始响应，区分 AT 返回 ERROR 与串口工具退出码。
+- 专项诊断在恢复目标拨号后再检查主机联网，避免把暂停期间的断网误判为新故障。
+
+安装脚本兼容性
 - 兼容 OpenWrt 公共库中的可选变量，修复 IPKG_INSTROOT: parameter not set。
 - 安装前型号查询最多等待 AT 队列锁 10 秒；失败时保持原配置。
 - 归档文件时间戳归零，避免离线路由器时钟落后引起解压警告。
@@ -16,7 +25,7 @@ SIM8260G-M2 识别与 RNDIS 拨号测试补丁 R2（2026-10-01）
 - RNDIS 模式使用 AT+NETACT=1；停止拨号时使用 AT+NETACT=0。
 - 默认建议 CID 6，依据用户提供手册第 341 页的 NETACT 示例；显式设置的 CID 保留。
   该示例不是所有定制固件都必须使用 CID 6 的保证，需要检查实际 CGDCONT/CGPADDR/QCMAP。
-- 自动 APN 时保留已有数据上下文，不写入示例 APN；缺少所选 CID 时才定义该 CID。
+- 自动 APN 按上述 R3 规则处理；显式 APN 按用户设置定义所选上下文。
 - 新型号按所选 CID 校验完整 IPv4/IPv6 地址，排除全零地址、错误 CID 和畸形地址。
 - 此型号 RNDIS 概况的连接状态需要 NETACT=1 且数据 CID 有有效地址。
   Yes 仍表示模组数据上下文可用；路由器 DHCP、路由、DNS 和实际访问需另外验证。
@@ -25,9 +34,11 @@ SIM8260G-M2 识别与 RNDIS 拨号测试补丁 R2（2026-10-01）
 - 不包含频段能力推测。QMI 列在模式配置中，当前实机验证目标是已枚举的 9011/RNDIS。
 
 使用（将压缩包上传到路由器 /tmp）
-tar -xzf /tmp/c2000max-sim8260-fix-r2-20261001.tar.gz -C /tmp
-sh /tmp/c2000max-sim8260-fix-r2-20261001/diagnose.sh 2_1
-sh /tmp/c2000max-sim8260-fix-r2-20261001/install.sh 2_1
+此 R3 升级包适用于已经安装 SIM8260 R1/R2 补丁或 QModem r16 的设备。
+安装脚本会校验文件版本；此前尚未安装 SIM8260 适配的旧设备需要对应的基础升级包。
+tar -xzf /tmp/c2000max-sim8260-fix-r3-20261001.tar.gz -C /tmp
+sh /tmp/c2000max-sim8260-fix-r3-20261001/diagnose.sh 2_1
+sh /tmp/c2000max-sim8260-fix-r3-20261001/install.sh 2_1
 等待约 20 秒，再执行 diagnose.sh，尝试联网。
 
 请保留前后两个 /tmp/sim8260-diag-*.tar.gz 文件，供对比。
@@ -42,7 +53,7 @@ sh /root/c2000max-sim8260-backup-<时间>-<PID>/rollback.sh /root/c2000max-sim82
 回退恢复代码、支持表及备份时的 QModem 配置，并对目标模组重新拨号。
 
 验证范围
-已通过本地型号解析、拨号/停止、失败处理、自动 APN 保留、CID/地址校验及现有模组回归测试。
+已通过本地型号解析、拨号/停止、失败处理、运行时自动 APN 继承、活动上下文保留、CID/地址校验及现有模组回归测试。
 尚未在用户这台 SIM8260G-M2 上验证成功联网；不能把本地测试等同实机成功。
 此前 R2 镜像保持原样，此补丁尚未包含在 R2 镜像中。
 
@@ -54,6 +65,7 @@ sh /root/c2000max-sim8260-backup-<时间>-<PID>/rollback.sh /root/c2000max-sim82
 sh /tmp/probe_activation.sh 2_1
 脚本只暂停目标模组的拨号监控，保存原拨号日志和一次 NETACT 激活的原始响应、退出码与耗时。
 本次单独把 NETACT 响应等待设为 30 秒，用于诊断，尚未将此值作为固件中的默认拨号超时。
-同时采集 CGCONTRDP、CEER、CID 6 和 QCMAP 状态，最后恢复目标模组拨号。
+同时采集 CGCONTRDP、CEER、CID 6 和 QCMAP 状态，再恢复目标模组拨号。
+恢复拨号后等待 20 秒，确认监控进程运行后才采集主机联网状态。
 脚本不写 APN、CID 或 USB 配置；运行期间移动网络可能短暂断开。
 把输出路径中的 /tmp/sim8260-activation-*.txt 发回分析。

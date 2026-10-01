@@ -86,8 +86,23 @@ sleep 20
 for cmd in 'AT+NETACT?' 'AT+CAPNET?' 'AT+CGPADDR=6' 'AT+CQCMAP="WWAN"' 'AT+CEER'; do
     query "$cmd"
 done
+cleanup
+if [ "$restore_failed" != 0 ]; then
+    echo '--- Host test skipped because restoring the target dialer failed' >> "$out"
+    echo "Diagnostic file: $out"
+    exit 1
+fi
+echo '--- Waiting 20 seconds after restoring the target dialer' >> "$out"
+sleep 20
+service_state >/dev/null 2>&1
+state_rc=$?
+if [ "$state_rc" != 0 ]; then
+    echo "--- Host test skipped: target dialer is not confirmed running (status=$state_rc)" >> "$out"
+    echo "Diagnostic file: $out"
+    exit 1
+fi
 {
-    echo '--- Host connectivity during single activation'
+    echo '--- Host connectivity after restoring target dialer'
     devices=$(uci -q get "qmodem.$section.network")
     for dev in $devices; do
         [ -d "/sys/class/net/$dev" ] || continue
@@ -97,7 +112,6 @@ done
     ip route
     timeout 8 nslookup example.com
 } | redact >> "$out" 2>&1
-cleanup
 trap - 0 1 2 15
 echo "Diagnostic file: $out"
 [ "$restore_failed" = 0 ]

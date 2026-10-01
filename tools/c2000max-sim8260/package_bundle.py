@@ -9,7 +9,7 @@ import subprocess
 import tarfile
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--baseline', default='7288f8dbb1', help='Known pre-fix QModem commit')
+parser.add_argument('--baseline', default='b65c38c71e', help='Known pre-fix QModem commit')
 parser.add_argument('--output', required=True, type=Path)
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
@@ -25,12 +25,15 @@ for relative in ['usr/share/qmodem/modem_dial.sh', 'usr/share/qmodem/vendor/simc
     shutil.copyfile(source, destination)
     fixed=hashlib.sha256(source.read_bytes()).hexdigest()
     git_path='package/custom/qmodem/application/qmodem/files/'+relative
-    if relative.endswith(('pdp_address.sh','simcom_network.sh')):
+    previous=subprocess.run(['git','-C',str(repo),'show',args.baseline+':'+git_path],capture_output=True)
+    if previous.returncode == 0:
+        original=hashlib.sha256(previous.stdout).hexdigest()
+    elif relative.endswith(('pdp_address.sh','simcom_network.sh')):
         original='absent'
     else:
-        original=hashlib.sha256(subprocess.check_output(['git','-C',str(repo),'show',args.baseline+':'+git_path])).hexdigest()
+        raise RuntimeError(f'Missing required baseline file: {git_path}')
     inventory.append(f'{relative} {original} {fixed}')
-for name in ['install.sh','diagnose.sh','rollback.sh','README.txt']:
+for name in ['install.sh','diagnose.sh','rollback.sh','probe_activation.sh','README.txt']:
     shutil.copyfile(tools/name,output/name)
 profile=json.loads((package/'files/usr/share/qmodem/modem_support.json').read_text())['modem_support']['usb']['simcom_sim8260g-m2']
 (output/'profile.json').write_text(json.dumps(profile, indent=2)+'\n')
