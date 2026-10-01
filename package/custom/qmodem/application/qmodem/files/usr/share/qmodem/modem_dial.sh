@@ -10,6 +10,8 @@ log_file="${MODEM_RUNDIR}/${modem_config}_dir/dial_log"
 debug_subject="modem_dial"
 source "${SCRIPT_DIR}/generic.sh"
 source "${SCRIPT_DIR}/fm350.sh"
+source "${SCRIPT_DIR}/pdp_address.sh"
+source "${SCRIPT_DIR}/simcom_network.sh"
 touch $log_file
 
 exec_pre_dial()
@@ -394,6 +396,7 @@ update_config()
     [ -n "$override_at_port" ] && at_port="$override_at_port"
     config_get manufacturer $modem_config manufacturer
     config_get platform $modem_config platform
+    config_get modem_name $modem_config name
     config_get use_ubus $modem_config use_ubus
     config_get force_set_apn $modem_config force_set_apn
     config_get fm350_pdp_auto $modem_config fm350_pdp_auto 1
@@ -539,87 +542,6 @@ check_dial_prepare()
     fi
 }
 
-qmodem_parse_cgpaddr()
-{
-    local response="$1" wanted="$2" records line field converted malformed=0
-
-    ipv4=""
-    ipv6=""
-    connection_status=-1
-    fm350_is_uint "$wanted" || return 1
-    # Select whole CGPADDR records for the requested CID. Never search the
-    # flattened response for IP substrings: MT5700's 16 decimal IPv6 bytes
-    # otherwise look like four unrelated IPv4 addresses.
-    records=$(printf '%s\n' "$response" | awk -v wanted="$wanted" '
-        function trim(value) {
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-            return value
-        }
-        /^[[:space:]]*\+CGPADDR:/ {
-            line = $0
-            sub(/\r$/, "", line)
-            sub(/^[[:space:]]*\+CGPADDR:[[:space:]]*/, "", line)
-            n = split(line, part, ",")
-            cid = trim(part[1])
-            if (cid !~ /^[0-9]+$/ || cid + 0 != wanted + 0)
-                next
-            print "R"
-            for (i = 2; i <= n; i++) {
-                field = trim(part[i])
-                if (field ~ /^"[^"]*"$/) {
-                    sub(/^"/, "", field)
-                    sub(/"$/, "", field)
-                }
-                print "F" field
-            }
-        }')
-    [ -n "$records" ] || return 1
-
-    while IFS= read -r line; do
-        [ "$line" != R ] || continue
-        field="${line#F}"
-        [ -n "$field" ] || continue
-        case "$field" in
-            *:*)
-                converted="$(fm350_colon_ipv6 "$field" 1 2>/dev/null)" || {
-                    malformed=1
-                    continue
-                }
-                case "$converted" in *[!0:]*) [ -n "$ipv6" ] || ipv6="$converted" ;; esac
-                ;;
-            *.*)
-                case "$field" in
-                    *[!0-9.]*|.*|*.|*..*) malformed=1; continue ;;
-                esac
-                [ "$field" != 0.0.0.0 ] || continue
-                if fm350_is_valid_ipv4 "$field"; then
-                    case "$field" in *[!0.]*) [ -n "$ipv4" ] || ipv4="$field" ;; esac
-                else
-                    converted="$(fm350_dotted_ipv6 "$field" 1 2>/dev/null)" || {
-                        malformed=1
-                        continue
-                    }
-                    case "$converted" in *[!0:]*) [ -n "$ipv6" ] || ipv6="$converted" ;; esac
-                fi
-                ;;
-            *) malformed=1 ;;
-        esac
-    done <<EOF
-$records
-EOF
-
-    if [ "$malformed" != 0 ]; then
-        ipv4=""
-        ipv6=""
-        return 1
-    fi
-    connection_status=0
-    [ -n "$ipv4" ] && connection_status=1
-    [ -n "$ipv6" ] && connection_status=2
-    [ -n "$ipv4" ] && [ -n "$ipv6" ] && connection_status=3
-    return 0
-}
-
 check_ip()
 {
     if fm350_is_modem && [ "$driver" != "mtk_pcie" ]; then
@@ -644,11 +566,16 @@ check_ip()
         return
     fi
 
+    local check_ip_cid="$pdp_index" check_ip_command="AT+CGPADDR=$pdp_index"
     case $manufacturer in
             "simcom")
                 case $platform in
                     "qualcomm")
-                        check_ip_command="AT+CGPADDR=6"
+                        if ! simcom_is_sim8260; then
+                            # Preserve the existing default for other SIMCom Qualcomm models.
+                            check_ip_cid=6
+                            check_ip_command="AT+CGPADDR=6"
+                        fi
                         ;;
                 esac
                 ;;
@@ -690,19 +617,15 @@ check_ip()
             ipaddr=$(at "$at_port" "$check_ip_command" | grep +CGPADDR:)
         fi
 
-        if [ "$manufacturer" = huawei ]; then
-            qmodem_parse_cgpaddr "$ipaddr" "$pdp_index" ||
-                m_debug "Huawei CGPADDR unavailable or malformed for CID $pdp_index"
+        if [ "$manufacturer" = huawei ] || [ "$manufacturer" = simcom ]; then
+            qmodem_parse_cgpaddr "$ipaddr" "$check_ip_cid" ||
+                m_debug "$manufacturer CGPADDR unavailable or malformed for CID $check_ip_cid"
             return
         fi
 
         if [ -n "$ipaddr" ];then
             ipv6=$(echo $ipaddr | grep -oE "\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b")
             ipv4=$(echo $ipaddr | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
-            if [ "$manufacturer" = "simcom" ];then
-                ipv4=$(echo $ipaddr | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" | grep -v "0\.0\.0\.0" | head -n 1)
-                ipv6=$(echo $ipaddr | grep -oE "\b([0-9a-fA-F]{0,4}.){2,7}[0-9a-fA-F]{0,4}\b")
-            fi
             # disallow_ipv4="0.0.0.0"
             # #remove the disallow ip
             # if [[ "$ipv4" == *"$disallow_ipv4"* ]];then
@@ -1101,6 +1024,10 @@ wwan_hang()
 ecm_hang()
 {
     m_debug "ecm_hang"
+    if simcom_is_sim8260 && [ "$driver" = rndis ]; then
+        simcom_netact_set 0
+        return $?
+    fi
     if fm350_is_modem && [ "$driver" != "mtk_pcie" ] &&
        [ "$fm350_pdp_auto" != "0" ]; then
         local cached_working_cid
@@ -1266,6 +1193,10 @@ qmi_dial()
 
 at_dial()
 {
+    if simcom_is_sim8260 && [ "$driver" = rndis ]; then
+        simcom_rndis_dial
+        return $?
+    fi
     if [ -z "$pdp_type" ];then
         pdp_type="IP"
     fi

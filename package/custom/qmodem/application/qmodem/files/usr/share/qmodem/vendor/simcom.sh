@@ -4,7 +4,9 @@ _Vendor="simcom"
 _Author="sfwtw,fujr"
 _Maintainer="sfwtw <sfwtw@qq.com>"
 source /usr/share/qmodem/generic.sh
-debug_subject="quectel_ctrl"
+source /usr/share/qmodem/pdp_address.sh
+source /usr/share/qmodem/simcom_network.sh
+debug_subject="simcom_ctrl"
 #return raw data
 get_imei(){
     at_command="AT+CGSN"
@@ -31,7 +33,7 @@ get_mode()
     case "$platform" in
         "qualcomm")
             at_command='AT+CUSBCFG?'
-            local mode_num=$(at ${at_port} ${at_command} | grep "USBID: " | sed 's/USBID: 0X1E0E,0X//g' | sed 's/\r//g')
+            local mode_num=$(at "$at_port" "$at_command" | simcom_usb_product)
             local mode
             pcie_cfg=$(at ${at_port} "AT+CPCIEMODE?")
             pcie_mode=$(echo "$pcie_cfg"|grep +CPCIEMODE: |cut -d':' -f2|xargs)
@@ -252,16 +254,13 @@ base_info()
     m_debug  "Quectel base info"
 
     #Name（名称）
-    at_command="AT+CGMM"
-    name=$(at $at_port $at_command | sed -n '2p' | sed 's/\r//g')
-    #Manufacturer（制造商）
-    at_command="AT+CGMI"
-    manufacturer=$(at $at_port $at_command | sed -n '2p' | sed 's/\r//g')
-    #Revision（固件版本）
-    at_command="AT+SIMCOMATI"
-    revision=$(at $at_port $at_command | grep "Revision:" | sed 's/Revision: //g' | sed 's/\r//g')
-    # at_command="AT+CGMR"
-    # revision=$(at $at_port $at_command | sed -n '2p' | sed 's/\r//g')
+    name=$(at "$at_port" 'AT+CGMM' | simcom_identity_value CGMM)
+    manufacturer=$(at "$at_port" 'AT+CGMI' | simcom_identity_value CGMI)
+    # CGMR reports product firmware; ATI can expose a different AT build version.
+    revision=$(at "$at_port" 'AT+CGMR' | simcom_identity_value CGMR)
+    if [ -z "$revision" ]; then
+        revision=$(at "$at_port" 'AT+SIMCOMATI' | simcom_identity_value Revision)
+    fi
     class="Base Information"
     add_plain_info_entry "name" "$name" "Name"
     add_plain_info_entry "manufacturer" "$manufacturer" "Manufacturer"
@@ -269,7 +268,11 @@ base_info()
     add_plain_info_entry "at_port" "$at_port" "AT Port"
     get_temperature
     get_voltage
-    get_connect_status
+    if simcom_is_sim8260 && [ "$(get_driver)" = rndis ]; then
+        simcom_get_connect_status
+    else
+        get_connect_status
+    fi
 }
 
 

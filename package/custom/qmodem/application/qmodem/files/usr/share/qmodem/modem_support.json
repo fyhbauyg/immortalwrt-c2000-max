@@ -1179,6 +1179,22 @@
                     "ecm"
                 ]
             },
+            "simcom_sim8260g-m2": {
+                "manufacturer_id": "1e0e",
+                "manufacturer": "simcom",
+                "platform": "qualcomm",
+                "data_interface": "usb",
+                "pdp_index": "6",
+                "modes": ["rndis", "qmi"]
+            },
+            "sim8260g-m2": {
+                "manufacturer_id": "1e0e",
+                "manufacturer": "simcom",
+                "platform": "qualcomm",
+                "data_interface": "usb",
+                "pdp_index": "6",
+                "modes": ["rndis", "qmi"]
+            },
             "simcom_a8200_serias": {
                 "manufacturer_id": "1a0e",
                 "id": "1e0e:9011",

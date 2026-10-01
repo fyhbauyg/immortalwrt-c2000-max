@@ -60,7 +60,29 @@ int main(int argc, char **argv)
 	assert(strcmp(profile.name, "srm825n") == 0);
 	sl_free(&profile.modes);
 	assert(profile_from_reply("+CGMM: SRM825-UNKNOWN\r\nOK\r\n", &profile) != 0);
+
+    /* User ATI reply without IMEI; the USB ID fallback points to unrelated ASR A8200. */
+    assert(match_profile_by_id("usb", "1e0e", "9011", &profile) == 0);
+    assert(strcmp(profile.name, "simcom_a8200_serias") == 0);
+    assert(strcmp(profile.platform, "asrmicro") == 0);
+    sl_free(&profile.modes);
+    const char *simcom_replies[] = {
+        "ATI\r\nManufacturer: SIMCOM INCORPORATED\r\nModel: SIMCOM_SIM8260G-M2\r\n"
+        "Revision: V1.0.01\r\n+GCAP: +CGSM\r\nOK\r\n",
+        "+CGMM: SIMCOM_SIM8260G-M2\r\nOK\r\n",
+        "AT+CGMM\r\nSIM8260G-M2\r\nOK\r\n",
+    };
+    for (size_t i = 0; i < sizeof(simcom_replies) / sizeof(simcom_replies[0]); i++) {
+        assert(profile_from_reply(simcom_replies[i], &profile) == 0);
+        assert(strcmp(profile.manufacturer, "simcom") == 0);
+        assert(strcmp(profile.platform, "qualcomm") == 0);
+        assert(strcmp(profile.pdp_index, "6") == 0);
+        assert(sl_contains(&profile.modes, "rndis"));
+        assert(sl_contains(&profile.modes, "qmi"));
+        sl_free(&profile.modes);
+    }
+    assert(profile_from_reply("+CGMM: SIMCOM_SIM8260G-UNKNOWN\r\nOK\r\n", &profile) != 0);
 	json_object_put(g.support_json);
-	puts("PASS: missing SRM825L reproduced; CGMM/ATI match with new profile; SRM825/N unchanged");
+	puts("PASS: SRM825L exact profile; SIM8260 CGMM/ATI Qualcomm profile overrides ASR USB fallback; existing models unchanged");
 	return 0;
 }

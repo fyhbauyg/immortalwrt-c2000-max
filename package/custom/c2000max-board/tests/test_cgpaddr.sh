@@ -6,7 +6,7 @@ DIAL="${C2000MAX_CGPADDR_DIAL_SCRIPT:-$QMODEM/modem_dial.sh}"
 . "$QMODEM/fm350.sh"
 # Load only the actual pure parser/check_ip functions; never source the
 # dialer's main entrypoint, OpenWrt libraries, or any AT/network code.
-eval "$(sed -n '/^qmodem_parse_cgpaddr()/,/^check_ip()/p' "$DIAL" | sed '$d')"
+. "$QMODEM/pdp_address.sh"
 eval "$(sed -n '/^check_ip()/,/^find_wan_fw_zone()/p' "$DIAL" | sed '$d')"
 
 manufacturer=huawei
