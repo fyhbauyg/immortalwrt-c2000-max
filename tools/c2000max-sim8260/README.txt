@@ -115,3 +115,35 @@ Windows 中旧前缀地址仍为 Preferred，是另一个需要清理租约的�
 
 NDP 原理及配置：https://github.com/openwrt/odhcpd/blob/master/README.md
 本固件 odhcpd-2026.06.29~5d7be43f 源码支持单独启用 NDP，无需将 RA/DHCPv6 改为 relay。
+
+NDP 试验无效后的源地址转换对照（2026-10-01）
+用户反馈启用 NDP 后电脑 IPv6 仍不通；MAX 自身 WAN IPv6 ping 正常。
+尚未收到启用 NDP 后的新抓包，不能据此认定 NDP 已生效或确定模组硬件故障。
+probe_ipv6_snat.sh 会保存当前 NDP 配置/运行状态，再自动比较：
+1. WAN IPv6 源地址 ping；该项不通时终止转换测试。
+2. LAN 当前公网 ::1 等地址作为源地址 ping。
+3. 仅把该 LAN 源地址的测试 ICMPv6 转换为 WAN 地址后重新 ping。
+
+将 probe_ipv6_snat.sh 上传到 /tmp，执行：
+sh /tmp/probe_ipv6_snat.sh 2_1 <电脑当前公网IPv6地址>
+交付文件名也可使用 c2000max-sim8260-nat6-probe-20261001.sh。
+不传电脑地址时，只自动测试路由器 LAN 源地址，不增加电脑转换规则。
+传入电脑地址时，仅匹配该电脑从 LAN 到目标模组的两个 ping 目标及 TCP 443，
+显示 NAT6 trial ACTIVE 后保留 60 秒，供电脑运行指定源地址的新 ping/HTTPS 请求。
+不扩大到全部 LAN 或其他 WAN，不修改 UCI、不发送 AT、不重启服务。
+
+脚本在用户设备上先用 nft -c 检查规则；使用独立临时 ip6 表，退出时撤除。
+独立 90 秒清理进程用于父脚本被强制结束的情况；同时输出手动删除该表的命令。
+撤除规则后，已有连接的 NAT 状态可能持续到连接关闭或超时；不清空全局连接表。
+旧 ICMPv6 流可能沿用原连接状态，判断时必须结合规则计数、实际转换后的 USB 抓包及新的 HTTPS 连接。
+NAT 链计数表示首次匹配规则的连接，不是该连接全部后续报文数量。
+保存前后配置散列、WAN 状态、NDP/路由/邻居、转换计数及 LAN/USB 报文头。
+输出 /tmp/sim8260-nat6-*.tar.gz，并保留 router-WAN-before、router-LAN-before、router-LAN-SNAT 三份结果。
+
+若 WAN 成功、LAN 原源地址失败而转换后成功，说明回程与源地址有关，
+再结合 NDP 生效情况区分邻居代理和模组/上游对下游地址的限制。
+电脑流量是否同样恢复必须单独验证；此对照脚本不是持久 NAT6 固件配置。
+本地 bash/dash 和无正则 jq 已验证边界、精确作用范围、失败/中断清理及独立清理进程。
+本地测试模拟 nft/网络；实际内核规则检查、数据包转换和连通性仍由用户设备验证。
+参考：https://wiki.nftables.org/wiki-nftables/index.php/Performing_Network_Address_Translation_(NAT)
+Windows curl 指定源地址使用 --interface <IP>：https://curl.se/docs/manpage.html#--interface
