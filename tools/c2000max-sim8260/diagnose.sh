@@ -48,6 +48,10 @@ lsusb -t > "$out/usb-tree.txt" 2>&1
     done
     ps w
 } | redact > "$out/network-services.txt" 2>&1
+# Dialer diagnostics are stored here rather than in logread.
+tail -150 "/var/run/qmodem/${section}_dir/dial_log" 2>/dev/null | redact > "$out/dial-log.txt"
+sha256sum /usr/share/qmodem/modem_dial.sh /usr/share/qmodem/simcom_network.sh \
+    /usr/share/qmodem/vendor/simcom.sh 2>/dev/null > "$out/installed-files.txt"
 logread | tail -450 | redact > "$out/logread.txt"
 dmesg | tail -250 | redact > "$out/dmesg.txt"
 cat > "$out/query.sh" <<'QUERY'

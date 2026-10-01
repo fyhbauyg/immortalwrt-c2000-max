@@ -48,3 +48,12 @@ sh /root/c2000max-sim8260-backup-<时间>-<PID>/rollback.sh /root/c2000max-sim82
 
 手册：SIM82XX_SIM83XX Series AT Command Manual V1.03
 相关章节：2.2.28/29（CGMM/CGMR），12.2.9（CUSBCFG），18.2.1（NETACT）。
+
+专项激活诊断（NETACT 为 0、重复拨号仍无数据链路时）
+将 probe_activation.sh 上传到路由器，执行：
+sh /tmp/probe_activation.sh 2_1
+脚本只暂停目标模组的拨号监控，保存原拨号日志和一次 NETACT 激活的原始响应、退出码与耗时。
+本次单独把 NETACT 响应等待设为 30 秒，用于诊断，尚未将此值作为固件中的默认拨号超时。
+同时采集 CGCONTRDP、CEER、CID 6 和 QCMAP 状态，最后恢复目标模组拨号。
+脚本不写 APN、CID 或 USB 配置；运行期间移动网络可能短暂断开。
+把输出路径中的 /tmp/sim8260-activation-*.txt 发回分析。
