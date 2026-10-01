@@ -1,4 +1,9 @@
-SIM8260G-M2 识别与 RNDIS 拨号测试补丁（2026-10-01）
+SIM8260G-M2 识别与 RNDIS 拨号测试补丁 R2（2026-10-01）
+
+安装脚本 R2 修正
+- 兼容 OpenWrt 公共库中的可选变量，修复 IPKG_INSTROOT: parameter not set。
+- 安装前型号查询最多等待 AT 队列锁 10 秒；失败时保持原配置。
+- 归档文件时间戳归零，避免离线路由器时钟落后引起解压警告。
 
 已确认的代码问题
 1. 缺少 SIMCOM_SIM8260G-M2 型号条目；1e0e:9011 的 USB ID 兜底指向 A8200/ASR。
@@ -20,9 +25,9 @@ SIM8260G-M2 识别与 RNDIS 拨号测试补丁（2026-10-01）
 - 不包含频段能力推测。QMI 列在模式配置中，当前实机验证目标是已枚举的 9011/RNDIS。
 
 使用（将压缩包上传到路由器 /tmp）
-tar -xzf /tmp/c2000max-sim8260-fix-20261001.tar.gz -C /tmp
-sh /tmp/c2000max-sim8260-fix-20261001/diagnose.sh 2_1
-sh /tmp/c2000max-sim8260-fix-20261001/install.sh 2_1
+tar -xzf /tmp/c2000max-sim8260-fix-r2-20261001.tar.gz -C /tmp
+sh /tmp/c2000max-sim8260-fix-r2-20261001/diagnose.sh 2_1
+sh /tmp/c2000max-sim8260-fix-r2-20261001/install.sh 2_1
 等待约 20 秒，再执行 diagnose.sh，尝试联网。
 
 请保留前后两个 /tmp/sim8260-diag-*.tar.gz 文件，供对比。

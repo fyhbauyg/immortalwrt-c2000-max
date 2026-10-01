@@ -1,6 +1,8 @@
 #!/bin/sh
 # Verified C2000MAX QModem r15/r16 patch; run diagnose.sh before installation.
-set -eu
+# OpenWrt libraries use optional unset variables (including IPKG_INSTROOT).
+# Keep failure checking without imposing nounset on the sourced libraries.
+set -e
 bundle=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 section="${1:-2_1}"
 case "$section" in ''|*[!A-Za-z0-9_]*) echo 'Invalid QModem section' >&2; exit 1 ;; esac
@@ -38,7 +40,7 @@ manufacturer=$(uci -q get "qmodem.$section.manufacturer" || true)
 . /usr/share/qmodem/modem_util.sh
 . /usr/share/qmodem/fm350.sh
 . "$bundle/payload/usr/share/qmodem/simcom_network.sh"
-QMODEM_AT_LOCK_WAIT=2
+QMODEM_AT_LOCK_WAIT=10
 export QMODEM_AT_LOCK_WAIT
 reply=$(at_timeout "$at_port" 'AT+CGMM' 6 2>&1) || { echo 'CGMM failed; no changes made' >&2; exit 1; }
 name=$(printf '%s\n' "$reply" | simcom_identity_value CGMM)

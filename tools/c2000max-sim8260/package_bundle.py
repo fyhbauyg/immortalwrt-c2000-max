@@ -41,6 +41,9 @@ archive=output.with_suffix('.tar.gz')
 def metadata(info):
     info.uid=info.gid=0
     info.uname=info.gname='root'
+    # Router clocks can lag while cellular service is offline.
+    info.mtime=0
+    info.pax_headers={}
     info.mode=0o755 if info.isdir() or info.name.endswith('.sh') else 0o644
     return info
 with tarfile.open(archive,'w:gz') as tar:
