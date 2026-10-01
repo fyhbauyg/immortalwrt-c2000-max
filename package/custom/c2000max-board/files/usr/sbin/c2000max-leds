@@ -325,18 +325,32 @@ get_at_port() {
 }
 
 parse_rsrp() {
-	# Normalize complete numeric samples, including optional units. Reject
-	# sentinel values; use the NR serving leg before LTE in NSA.
-	jq -rs '[.[] | .modem_info[]? |
-		select((.key // "" | ascii_downcase | gsub("[[:space:]]"; "")) == "rsrp") |
-		{raw: (.value | tostring | gsub("−"; "-") |
-			gsub("^[[:space:]]+|[[:space:]]+$"; "") |
-			sub("[[:space:]]*[dD][bB][mM]$"; "")),
-		 nr: ((.extra_info // "") | test("^(NR|5G)"; "i"))} |
-		select(.raw | test("^-?[0-9]+([.][0-9]+)?$")) |
-		.v = (.raw | tonumber) | select(.v >= -156 and .v <= -31)] |
-		sort_by(.nr) | reverse | .[0].v // empty' 2>/dev/null |
-		awk 'NF { printf "%.0f\n", $1; exit }'
+	# Firmware ships jq without Oniguruma. Keep JSON extraction in jq and
+	# normalize/validate samples with awk; jq test/sub/gsub are unavailable.
+	# In NSA prefer a usable NR leg, then the last usable LTE sample.
+	jq -rs '.[] | .modem_info[]? |
+		[(.key // "" | tostring), (.value // "" | tostring),
+		 (.extra_info // "" | tostring)] | @tsv' 2>/dev/null |
+		awk -F '\t' '
+		{
+			key=$1
+			gsub(/[[:space:]]/, "", key)
+			if (tolower(key) != "rsrp") next
+			value=$2
+			gsub(/−/, "-", value)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+			sub(/[[:space:]]*[dD][bB][mM]$/, "", value)
+			if (value !~ /^-?[0-9]+([.][0-9]+)?$/) next
+			numeric=value+0
+			if (numeric < -156 || numeric > -31) next
+			nr=(toupper($3) ~ /^(NR|5G)/)
+			if (!found || nr >= selected_nr) {
+				selected=numeric
+				selected_nr=nr
+				found=1
+			}
+		}
+		END { if (found) printf "%.0f\n", selected }'
 }
 
 get_rsrp() {
