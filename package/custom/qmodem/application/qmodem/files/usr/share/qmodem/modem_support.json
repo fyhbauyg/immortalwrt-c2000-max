@@ -1027,6 +1027,18 @@
                     "ncm"
                 ]
             },
+            "srm825l": {
+                "manufacturer_id": "2dee",
+                "manufacturer": "meig",
+                "platform": "qualcomm",
+                "data_interface": "usb",
+                "pdp_index": "1",
+                "modes": [
+                    "ecm",
+                    "rndis",
+                    "ncm"
+                ]
+            },
             "ec20f": {
                 "manufacturer_id": "2c7c",
                 "manufacturer": "quectel",
