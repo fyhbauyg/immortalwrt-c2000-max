@@ -54,7 +54,8 @@ sh /root/c2000max-sim8260-backup-<时间>-<PID>/rollback.sh /root/c2000max-sim82
 
 验证范围
 已通过本地型号解析、拨号/停止、失败处理、运行时自动 APN 继承、活动上下文保留、CID/地址校验及现有模组回归测试。
-尚未在用户这台 SIM8260G-M2 上验证成功联网；不能把本地测试等同实机成功。
+后续实机诊断已确认 IPv4 拨号与 WAN IPv6 测试成功，LAN IPv6 仍需验证。
+首次 NETACT 成功早于 R3 的重新拨号，现有日志不能单独证明自动 APN 修正是成功原因。
 此前 R2 镜像保持原样，此补丁尚未包含在 R2 镜像中。
 
 手册：SIM82XX_SIM83XX Series AT Command Manual V1.03
@@ -84,3 +85,33 @@ sh /tmp/diagnose_ipv6.sh 2_1 <电脑当前公网IPv6地址>
 Windows 地址状态：https://learn.microsoft.com/en-us/powershell/module/nettcpip/get-netipaddress
 Windows 指定 ping 源地址：https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ping
 输出 /tmp/sim8260-ipv6-*.tar.gz；可能包含局域网地址、设备名称和防火墙规则。
+
+LAN IPv6 NDP 配置试验（2026-10-01）
+实机双侧抓包已确认：电脑用当前前缀地址发出的 ICMPv6 请求从 br-lan 转发到 usb0，
+USB 侧未收到对应回应；路由器 WAN 源地址成功，路由器 LAN 的 ::1 源地址失败。
+因此不能仅归因于电脑选用了旧地址，也不能归因于路由器未转发请求。
+当前设置使用 extend_prefix 扩展上游 /64，LAN 为 RA server/SLAAC，但没有 NDP 中继。
+缺少 NDP 代理与上游多地址回程限制都符合现象；目前没有抓到上游查询电脑地址的 NS，
+所以尚不能保证只启用 NDP 就能解决，需先进行这项配置对照试验。
+
+将 enable_ndp_test.sh 上传至路由器 /tmp：
+sh /tmp/enable_ndp_test.sh 2_1
+也可使用交付文件名 c2000max-sim8260-ndp-test-20261001.sh。
+仅针对已启用前缀扩展、WAN6 在线的 SIM8260G-M2。
+新增目标 WAN6 的 master=1、ndp=relay，LAN 设置 ndp=relay；仅重启 odhcpd。
+LAN RA server、SLAAC、DHCPv6 和拨号设置保持现状，不发送 AT。
+原 DHCP 配置备份在脚本输出的 /root 路径，按输出的 rollback.sh 命令回退。
+安装失败自动恢复；存在其他中继 master、自定义目标 DHCP section 或未提交修改时停止。
+回退时如发现安装后有其他 DHCP 修改，会保留这些修改并提示原备份位置。
+
+等待 10 秒，在电脑用当前公网 IPv6 源地址再次 ping，并测试 IPv6 HTTPS。
+复测时保持 QModem 拨号不变：当前扩展前缀流程在重新拨号时会删除这次增加的 WAN6 DHCP section。
+成功后再将 NDP 配置纳入拨号流程；这次配置试验尚不是持久固件修正。
+若仍失败，使用 diagnose_ipv6.sh 再采集一次，同时执行电脑指定源地址测试，
+重点查看 proxy_ndp、NS/NA、/128 邻居路由和 USB 侧回包，之后区分上游单地址限制。
+Windows 中旧前缀地址仍为 Preferred，是另一个需要清理租约的现象，当前抓包显示默认源地址已是新前缀。
+本地安装/回退、已有设置保留、冲突拒绝、提交失败和服务重启失败恢复已在 bash/dash 与无正则 jq 上通过验证。
+这些测试不能代替实机确认 NDP 回程是否恢复。
+
+NDP 原理及配置：https://github.com/openwrt/odhcpd/blob/master/README.md
+本固件 odhcpd-2026.06.29~5d7be43f 源码支持单独启用 NDP，无需将 RA/DHCPv6 改为 relay。
