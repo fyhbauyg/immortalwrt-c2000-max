@@ -69,3 +69,18 @@ sh /tmp/probe_activation.sh 2_1
 恢复拨号后等待 20 秒，确认监控进程运行后才采集主机联网状态。
 脚本不写 APN、CID 或 USB 配置；运行期间移动网络可能短暂断开。
 把输出路径中的 /tmp/sim8260-activation-*.txt 发回分析。
+
+LAN IPv6 专项诊断（路由器 IPv6 可用、LAN 电脑取得地址但访问失败）
+将 diagnose_ipv6.sh 上传到 /tmp，运行：
+sh /tmp/diagnose_ipv6.sh 2_1 <电脑当前公网IPv6地址>
+脚本只读取配置及网络状态，不发送 AT、不改 UCI、不重启服务。
+记录网络/RA/DHCPv6/NDP 配置、前后路由/邻居/防火墙状态、路由器 WAN 与 LAN 源地址测试。
+若 tcpdump 可用，在 LAN 和模组接口各捕获最多 40 秒、250 条 ICMPv6/DHCPv6 报文头。
+开始捕获后同时在电脑运行默认源地址及指定源地址的 IPv6 ping。
+电脑还应提供 Get-NetIPAddress 的 AddressState、PreferredLifetime、ValidLifetime，以及默认 IPv6 路由。
+不要仅凭多个地址认定源地址错误：Deprecated 状态可正常保留，需要比较各源地址测试。
+没有 PD 时，odhcpd 支持 RA/DHCPv6/NDP 中继；是否适用需结合当前上游前缀和回包诊断。
+上游说明：https://github.com/openwrt/odhcpd/blob/master/README.md
+Windows 地址状态：https://learn.microsoft.com/en-us/powershell/module/nettcpip/get-netipaddress
+Windows 指定 ping 源地址：https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ping
+输出 /tmp/sim8260-ipv6-*.tar.gz；可能包含局域网地址、设备名称和防火墙规则。
