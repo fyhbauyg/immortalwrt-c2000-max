@@ -27,13 +27,18 @@ local STATE_DIR = "/var/run/c2000max-app"
 local CACHE_DIR = STATE_DIR .. "/cache"
 local ACTIVITY_FILE = STATE_DIR .. "/activity"
 local MAX_SHARED_CACHE = 1024 * 1024
+local LOCAL_SNAPSHOT_MAX_AGE = 60
 
 local function bool_option(name)
 	return uci:get("c2000max_app", "main", name) == "1"
 end
 
 local function number_option(name, default, minimum, maximum)
-	local value = tonumber(uci:get("c2000max_app", "main", name))
+	-- LuCI UCI may return nil plus an error string when an option is
+	-- missing or temporarily unavailable. Only its first result is a value;
+	-- passing both to tonumber would treat the error as a numeric base.
+	local raw = uci:get("c2000max_app", "main", name)
+	local value = tonumber(raw)
 	if not value or value <= 0 then
 		value = default
 	end
@@ -122,6 +127,18 @@ local function shared_cache_write(name, value)
 		return false
 	end
 	return true
+end
+
+local function refresh_lock(name)
+	name = tostring(name):gsub("[^A-Za-z0-9_.%-]", "_")
+	-- Fixtures without native descriptors still exercise the data path.
+	if type(nixio.open) ~= "function" then return false, true end
+	fs.mkdirr(CACHE_DIR)
+	fs.chmod(CACHE_DIR, "0700")
+	local lock = nixio.open(CACHE_DIR .. "/" .. name .. ".lock", "w", "0600")
+	if not lock then return nil, false end
+	if not lock:lock("tlock") then lock:close(); return nil, false end
+	return lock, true
 end
 
 local function shared_cache_remove(name)
@@ -629,14 +646,15 @@ local carrier_cache = {}
 local carrier_cache_at = {}
 local carrier_failure_at = {}
 
-local function cached_sim_status(force)
+local function cached_sim_status(force, prefer_stale)
 	local now = precise_time()
 	local maximum_age = M.cache_refresh_policy().selector
 	if not force and selector_cache and now - selector_cache_at < maximum_age then
 		return selector_cache
 	end
 	if not force then
-		local shared, updated = shared_cache_read("selector", maximum_age, false)
+		local shared, updated = shared_cache_read("selector",
+			prefer_stale and LOCAL_SNAPSHOT_MAX_AGE or maximum_age, false)
 		if shared then
 			selector_cache = shared
 			selector_cache_at = updated
@@ -656,7 +674,7 @@ local function cached_sim_status(force)
 	return selector_cache or value
 end
 
-local function list_modems(force)
+local function list_modems(force, prefer_stale)
 	local now = precise_time()
 	local maximum_age = M.cache_refresh_policy().modem
 	if not force and modem_cache and
@@ -665,14 +683,36 @@ local function list_modems(force)
 	end
 	if not force then
 		local shared, updated = shared_cache_read(
-			"modems", maximum_age, false)
+			"modems", prefer_stale and LOCAL_SNAPSHOT_MAX_AGE or maximum_age, false)
 		if shared then
 			modem_cache = shared
 			modem_cache_at = updated
 			return shared
 		end
 	end
+	local lock, acquired = refresh_lock("modems")
+	if not acquired then
+		-- One request already owns the cold/expired refresh. Reuse a bounded
+		-- snapshot, or wait briefly for its atomic publication without issuing
+		-- a second set of serialized modem operations.
+		for attempt = 1, 20 do
+			local shared, updated = shared_cache_read("modems", LOCAL_SNAPSHOT_MAX_AGE, false)
+			if shared then modem_cache, modem_cache_at = shared, updated; return shared end
+			nixio.nanosleep(0, 50000000)
+		end
+		return {}
+	end
+	-- Another worker may have published between our first read and the lock.
+	if not force then
+		local shared, updated = shared_cache_read("modems", maximum_age, false)
+		if shared then
+			if lock then lock:close() end
+			modem_cache, modem_cache_at = shared, updated
+			return shared
+		end
+	end
 	local result = {}
+	local available = true
 	local selector = cached_sim_status(force)
 	uci:foreach("qmodem", "modem-device", function(section)
 		if section.state ~= "disabled" then
@@ -686,6 +726,7 @@ local function list_modems(force)
 			local sim = safe_ubus("qmodem", "sim_info", {
 				config_section = id
 			})
+			if not next(info) and not next(network) and not next(sim) then available = false end
 			local modem = {
 				name = id,
 				model = section.model or section.name or section.platform or "",
@@ -700,11 +741,20 @@ local function list_modems(force)
 			result[#result + 1] = modem
 		end
 	end)
+	if not available then
+		local previous, updated = shared_cache_read("modems", LOCAL_SNAPSHOT_MAX_AGE, false)
+		if lock then lock:close() end
+		if previous then modem_cache, modem_cache_at = previous, updated; return previous end
+		return result
+	end
 	modem_cache = result
-	modem_cache_at = now
+	modem_cache_at = precise_time()
 	if #result > 0 then
 		shared_cache_write("modems", result)
+	else
+		shared_cache_remove("modems")
 	end
+	if lock then lock:close() end
 	return result
 end
 
@@ -1468,8 +1518,8 @@ local function interface_stats(name)
 	return require("c2000max_app.netstats").read(name)
 end
 
-local function sim_status(force)
-	return cached_sim_status(force == true)
+local function sim_status(force, prefer_stale)
+	return cached_sim_status(force == true, prefer_stale)
 end
 
 local function sim_selection(selector)
@@ -2601,7 +2651,7 @@ local function query_fast_signal(modem)
 	return parse_huawei_monsc(query_serialized_at(modem, "AT^MONSC"))
 end
 
-local function cached_fast_signal(modem, maximum_age)
+local function cached_fast_signal(modem, maximum_age, prefer_stale)
 	local key = type(modem) == "table" and tostring(modem.name or "") or ""
 	if key == "" then
 		return {}
@@ -2609,13 +2659,16 @@ local function cached_fast_signal(modem, maximum_age)
 	local now = precise_time()
 	local previous = fast_signal_cache[key]
 	local previous_at = tonumber(fast_signal_cache_at[key]) or 0
-	if not previous then
-		previous, previous_at = shared_cache_read(
-			"fast_" .. key, maximum_age, false)
-		if previous then
-			fast_signal_cache[key] = previous
-			fast_signal_cache_at[key] = previous_at
-		end
+	local shared, updated = shared_cache_read("fast_" .. key,
+		prefer_stale and LOCAL_SNAPSHOT_MAX_AGE or maximum_age, false)
+	if shared then
+		previous, previous_at = shared, updated
+		fast_signal_cache[key] = previous
+		fast_signal_cache_at[key] = previous_at
+	end
+	if prefer_stale then
+		local age = now - previous_at
+		return previous and age >= 0 and age < LOCAL_SNAPSHOT_MAX_AGE and previous or {}
 	end
 	local age = now - previous_at
 	if previous and age >= 0 and age < maximum_age then
@@ -2627,15 +2680,28 @@ local function cached_fast_signal(modem, maximum_age)
 	   failure_age < FAST_SIGNAL_FAILURE_BACKOFF then
 		return previous or {}
 	end
+	local lock, acquired = refresh_lock("fast_" .. key)
+	if not acquired then
+		local stale = shared_cache_read("fast_" .. key, LOCAL_SNAPSHOT_MAX_AGE, false)
+		return stale or {}
+	end
+	local ready, ready_at = shared_cache_read("fast_" .. key, maximum_age, false)
+	if ready then
+		if lock then lock:close() end
+		fast_signal_cache[key], fast_signal_cache_at[key] = ready, ready_at
+		return ready
+	end
 	local current = query_fast_signal(modem)
 	if type(current) == "table" and next(current) then
 		fast_signal_cache[key] = current
 		fast_signal_cache_at[key] = now
 		fast_signal_failure_at[key] = nil
 		shared_cache_write("fast_" .. key, current)
+		if lock then lock:close() end
 		return current
 	end
 	fast_signal_failure_at[key] = now
+	if lock then lock:close() end
 	return previous or {}
 end
 
@@ -2722,7 +2788,7 @@ local function query_carrier_topology(modem)
 	return parse_huawei_hfreqinfo(response, status.mode)
 end
 
-local function cached_carrier_topology(modem, maximum_age)
+local function cached_carrier_topology(modem, maximum_age, prefer_stale)
 	local key = type(modem) == "table" and tostring(modem.name or "") or ""
 	if key == "" then
 		return {}
@@ -2730,13 +2796,16 @@ local function cached_carrier_topology(modem, maximum_age)
 	local now = precise_time()
 	local previous = carrier_cache[key]
 	local previous_at = tonumber(carrier_cache_at[key]) or 0
-	if not previous then
-		previous, previous_at = shared_cache_read(
-			"carrier_" .. key, maximum_age, false)
-		if previous then
-			carrier_cache[key] = previous
-			carrier_cache_at[key] = previous_at
-		end
+	local shared, updated = shared_cache_read("carrier_" .. key,
+		prefer_stale and LOCAL_SNAPSHOT_MAX_AGE or maximum_age, false)
+	if shared then
+		previous, previous_at = shared, updated
+		carrier_cache[key] = previous
+		carrier_cache_at[key] = previous_at
+	end
+	if prefer_stale then
+		local age = now - previous_at
+		return previous and age >= 0 and age < LOCAL_SNAPSHOT_MAX_AGE and previous or {}
 	end
 	local age = now - previous_at
 	if previous and age >= 0 and age < maximum_age then
@@ -2748,15 +2817,28 @@ local function cached_carrier_topology(modem, maximum_age)
 	   failure_age < FAST_SIGNAL_FAILURE_BACKOFF then
 		return previous or {}
 	end
+	local lock, acquired = refresh_lock("carrier_" .. key)
+	if not acquired then
+		local stale = shared_cache_read("carrier_" .. key, LOCAL_SNAPSHOT_MAX_AGE, false)
+		return stale or {}
+	end
+	local ready, ready_at = shared_cache_read("carrier_" .. key, maximum_age, false)
+	if ready then
+		if lock then lock:close() end
+		carrier_cache[key], carrier_cache_at[key] = ready, ready_at
+		return ready
+	end
 	local current = query_carrier_topology(modem)
 	if type(current) == "table" and next(current) then
 		carrier_cache[key] = current
 		carrier_cache_at[key] = now
 		carrier_failure_at[key] = nil
 		shared_cache_write("carrier_" .. key, current)
+		if lock then lock:close() end
 		return current
 	end
 	carrier_failure_at[key] = now
+	if lock then lock:close() end
 	return previous or {}
 end
 
@@ -2777,13 +2859,13 @@ local function apply_carrier_topology(status, topology)
 	return status
 end
 
-local function current_signal_status(modem, maximum_age)
+local function current_signal_status(modem, maximum_age, prefer_stale)
 	local original = type(modem) == "table" and modem.status or {}
 	local status = {}
 	for key, value in pairs(type(original) == "table" and original or {}) do
 		status[key] = value
 	end
-	local current = cached_fast_signal(modem, maximum_age)
+	local current = cached_fast_signal(modem, maximum_age, prefer_stale)
 	for _, key in ipairs({ "band", "cell", "earfcn", "pci", "rsrp",
 		"rsrq", "sinr", "tac" }) do
 		if current[key] ~= nil and tostring(current[key]) ~= "" then
@@ -3032,13 +3114,13 @@ local function do_sms(data)
 	return nil, nil, "invalid sms action"
 end
 
-local function basic_status()
+local function basic_status(prefer_stale)
 	return {
 		uptime = sys.uptime(),
 		lan = safe_ubus("network.interface.lan", "status", {}),
 		wan = safe_ubus("network.interface.c2000_wan", "status", {}),
 		port = safe_ubus("c2000max", "port_status", {}),
-		sim = sim_status()
+		sim = sim_status(false, prefer_stale)
 	}
 end
 
@@ -3087,7 +3169,7 @@ function M.handle(action, data, context)
 		if focused and modem_cache and #modem_cache > 0 then
 			cellular = modem_cache
 		else
-			cellular = list_modems()
+			cellular = list_modems(false, context.source == "local" and not focused)
 		end
 		local refresh = M.signal_refresh_policy()
 		if focused then
@@ -3097,9 +3179,9 @@ function M.handle(action, data, context)
 		rv.signal = {}
 		for index, modem in ipairs(cellular) do
 			local status = {}
-			local current = current_signal_status(modem, refresh.normal)
+			local current = current_signal_status(modem, refresh.normal, context.source == "local")
 			apply_carrier_topology(current,
-				cached_carrier_topology(modem, refresh.carrier))
+				cached_carrier_topology(modem, refresh.carrier, context.source == "local"))
 			for key, value in pairs(current) do
 				status[key] = value
 			end
@@ -3112,11 +3194,11 @@ function M.handle(action, data, context)
 		end
 		return rv
 	elseif action == "info" then
-		local modems = list_modems()
+		local modems = list_modems(false, context.source == "local")
 		local allow_signal = bool_option("local_signal_enable")
 		local allow_wifi = bool_option("local_wifi_enable")
 		local allow_clients = bool_option("local_client_enable")
-		local selector = modems[1] and modems[1].selector or sim_status()
+		local selector = modems[1] and modems[1].selector or sim_status(false, context.source == "local")
 		local selection = sim_selection(selector)
 		local active = {}
 		for index, modem in ipairs(modems) do
@@ -3136,7 +3218,7 @@ function M.handle(action, data, context)
 				modem_cnt = #modems,
 				active_modem = active
 			},
-			runtime = basic_status(),
+			runtime = basic_status(context.source == "local"),
 			wifi = allow_wifi and list_wifi() or {},
 			cellular = allow_signal and app_cellular(modems) or {},
 			client = allow_clients and list_clients() or {},
@@ -3351,7 +3433,7 @@ function M.handle(action, data, context)
 		return rv
 	elseif action == "combo" or action == "sync" then
 		rv.result = {
-			runtime = basic_status(),
+			runtime = basic_status(context.source == "local"),
 			cellular = bool_option("local_signal_enable") and
 				list_modems() or {},
 			sim = sim_status()
@@ -3412,7 +3494,14 @@ end
 
 function M.local_protocol_mode()
 	local mode = uci:get("c2000max_app", "main", "local_protocol_mode")
-	return mode == "legacy" and "legacy" or "modern"
+	if mode == "legacy" or mode == "modern" then return mode end
+	-- APP 3.2.1's AES session may wait for a cloud facKey, even on LAN.
+	-- Its factory DES path authenticates locally. A configured root password
+	-- needs the AES password dialog; never choose a password-free path then.
+	if M.management_password_configured() or bool_option("local_signal_public_enable") then
+		return "modern"
+	end
+	return "legacy"
 end
 
 function M.remote_enabled()

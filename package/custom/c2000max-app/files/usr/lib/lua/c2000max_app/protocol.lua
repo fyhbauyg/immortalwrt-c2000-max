@@ -379,6 +379,20 @@ local function request_token(data, context)
 	return token:lower()
 end
 
+local function write_session(path, value)
+	local nonce = sys.uniqueid(8)
+	if type(nonce) ~= "string" or not nonce:match("^[0-9a-f]+$") then
+		return false
+	end
+	local temporary = path .. ".tmp." .. nonce
+	if not fs.writefile(temporary, value) then return false end
+	if not fs.chmod(temporary, "0600") or not os.rename(temporary, path) then
+		fs.unlink(temporary)
+		return false
+	end
+	return true
+end
+
 function M.new_session(auth_kind)
 	auth_kind = auth_kind == "password" and "password" or "device"
 
@@ -390,7 +404,7 @@ function M.new_session(auth_kind)
 	end
 	local expires = os.time() + 3600
 	local path = SESSION_DIR .. "/" .. token
-	if not fs.writefile(path, tostring(expires) .. " " .. auth_kind .. "\n") then
+	if not write_session(path, tostring(expires) .. " " .. auth_kind .. "\n") then
 		return nil
 	end
 	fs.chmod(path, "0600")
@@ -417,7 +431,9 @@ function M.valid_session(data, context, require_password)
 		return false
 	end
 	-- Sliding one-hour timeout, matching the official APP session behavior.
-	fs.writefile(path, tostring(os.time() + 3600) .. " " .. auth_kind .. "\n")
+	-- Concurrent signal/info/heartbeat requests share this token. Replacing
+	-- it atomically avoids an empty file being mistaken for an expired session.
+	write_session(path, tostring(os.time() + 3600) .. " " .. auth_kind .. "\n")
 	return true
 end
 

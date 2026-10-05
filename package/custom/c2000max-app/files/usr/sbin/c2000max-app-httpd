@@ -45,7 +45,7 @@ local function send_all(client, value)
 end
 
 local function reply(client, status, payload, extra_headers)
-	local body = json.stringify(payload or {})
+	local body = status == "204 No Content" and "" or json.stringify(payload or {})
 	local headers = {
 		"HTTP/1.1 " .. status,
 		"Content-Type: application/json",
@@ -65,10 +65,21 @@ local function reply(client, status, payload, extra_headers)
 end
 
 local function receive_request(client)
+	-- Socket timeouts alone restart for every fragment. Use one total read
+	-- deadline so partial probes cannot occupy a worker indefinitely.
+	local deadline = nixio.sysinfo().uptime + 5
+	local pollset = {{ fd = client, events = nixio.poll_flags("in") }}
+	local function receive(length)
+		local remaining = deadline - nixio.sysinfo().uptime
+		if remaining <= 0 then return nil end
+		local ready = nixio.poll(pollset, remaining * 1000)
+		if not ready or ready <= 0 then return nil end
+		return client:recv(length)
+	end
 	local buffer = ""
 	local header_end
 	while #buffer < MAX_HEADER do
-		local chunk = client:recv(math.min(4096, MAX_HEADER - #buffer))
+		local chunk = receive(math.min(4096, MAX_HEADER - #buffer))
 		if not chunk or #chunk == 0 then
 			break
 		end
@@ -99,15 +110,24 @@ local function receive_request(client)
 	for line in (rest .. "\r\n"):gmatch("(.-)\r\n") do
 		local name, value = line:match("^([^:]+):%s*(.*)$")
 		if name then
-			headers[name:lower()] = value
+			name = name:lower()
+			if headers[name] then return nil, "duplicate request header" end
+			headers[name] = value
 		end
 	end
-	local length = tonumber(headers["content-length"] or "0")
+	if headers["transfer-encoding"] then
+		return nil, "unsupported transfer encoding"
+	end
+	local raw_length = headers["content-length"] or "0"
+	if not raw_length:match("^%d+$") then
+		return nil, "invalid content length"
+	end
+	local length = tonumber(raw_length)
 	if not length or length < 0 or length > MAX_BODY then
 		return nil, "invalid content length"
 	end
 	while #body < length do
-		local chunk = client:recv(math.min(4096, length - #body))
+		local chunk = receive(math.min(4096, length - #body))
 		if not chunk or #chunk == 0 then
 			return nil, "incomplete request body"
 		end
@@ -198,12 +218,4 @@ if not listening then
 	os.exit(1)
 end
 
-while true do
-	local client = server:accept()
-	if client then
-		client:setopt("socket", "rcvtimeo", 5, 0)
-		client:setopt("socket", "sndtimeo", 5, 0)
-		pcall(handle, client)
-		client:close()
-	end
-end
+require("c2000max_app.server").run(server, handle)

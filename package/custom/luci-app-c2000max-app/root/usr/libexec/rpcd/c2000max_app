@@ -242,8 +242,8 @@ status()
 	done
 	value="$(uci -q get c2000max_app.main.local_protocol_mode)"
 	case "$value" in
-		legacy) ;;
-		*) value=modern ;;
+		auto|modern|legacy) ;;
+		*) value=auto ;;
 	esac
 	json_add_string local_protocol_mode "$value"
 	json_add_string device_id "$device_id"
@@ -548,7 +548,7 @@ EOF
 				done
 				json_get_var value local_protocol_mode
 				case "$value" in
-					modern|legacy) ;;
+					auto|modern|legacy) ;;
 					*)
 						uci -q revert c2000max_app
 						echo '{"success":false,"message":"本地 APP 协议模式无效"}'

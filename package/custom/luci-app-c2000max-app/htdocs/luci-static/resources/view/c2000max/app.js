@@ -108,6 +108,7 @@ const INTERVALS = [
 ];
 
 const PROTOCOL_MODES = [
+	{ value: 'auto', title: '自动选择（推荐）' },
 	{ value: 'modern', title: '新版加密协议（AES）' },
 	{ value: 'legacy', title: '传统兼容协议（DES）' }
 ];
@@ -139,7 +140,7 @@ function flag(value) {
 
 function settingsStatusValid(status) {
 	return status != null && typeof status === 'object' &&
-		(status.local_protocol_mode === 'modern' || status.local_protocol_mode === 'legacy') &&
+		PROTOCOL_MODES.some(function(mode) { return mode.value === status.local_protocol_mode; }) &&
 		typeof status.root_password_configured === 'boolean' &&
 		OPTIONS.every(function(option) { return typeof status[option.name] === 'boolean'; }) &&
 		INTERVALS.every(function(option) {
@@ -208,8 +209,8 @@ function protocolRow(status) {
 	}, PROTOCOL_MODES.map(function(mode) {
 		return E('option', { 'value': mode.value }, mode.title);
 	}));
-	select.value = status.local_protocol_mode === 'legacy' ?
-		'legacy' : 'modern';
+	select.value = PROTOCOL_MODES.some(function(mode) { return mode.value === status.local_protocol_mode; }) ?
+		status.local_protocol_mode : 'auto';
 	return E('div', { 'class': 'cbi-value' }, [
 		E('label', {
 			'class': 'cbi-value-title',
@@ -218,7 +219,7 @@ function protocolRow(status) {
 		E('div', { 'class': 'cbi-value-field' }, [
 			select,
 			E('div', { 'class': 'cbi-value-description' },
-				'鲲鹏无限 3.1/3.2 根据设备探测结果选择协议。3.2 的 AES 信号页面不携带登录凭据；需要信号详情时，可明确授权下方的局域网免登录读取，或使用传统兼容协议。切换后请完全退出并重新打开 APP。')
+				'自动模式在未设置管理员密码时使用本地兼容认证，减少新版 APP 等待云端密钥的时间；设置密码后使用 AES 密码校验。手动 AES 模式可能需要官方账号绑定与云端授权。已有手动选择会保留；切换后请完全退出并重新打开 APP。')
 		])
 	]);
 }
@@ -341,7 +342,7 @@ return view.extend({
 		});
 		const protocolMode = document.getElementById(
 			'c2000max-app-local_protocol_mode').value;
-		if (protocolMode !== 'modern' && protocolMode !== 'legacy') {
+		if (!PROTOCOL_MODES.some(function(mode) { return mode.value === protocolMode; })) {
 			ui.addNotification(null, E('p', {}, '本地 APP 协议模式无效。'), 'error');
 			return;
 		}
@@ -358,12 +359,12 @@ return view.extend({
 		}
 		const publicEnabled = document.getElementById(
 			'c2000max-app-local_signal_public_enable').checked;
-		const publicActive = publicEnabled && protocolMode === 'modern' &&
+		const publicActive = publicEnabled && (protocolMode === 'modern' || protocolMode === 'auto') &&
 			document.getElementById('c2000max-app-local_enable').checked &&
 			document.getElementById('c2000max-app-local_signal_enable').checked &&
 			!this.currentStatus.root_password_configured;
 		const wasPublicActive = flag(this.currentStatus.local_signal_public_enable) &&
-			this.currentStatus.local_protocol_mode === 'modern' &&
+			(this.currentStatus.local_protocol_mode === 'modern' || this.currentStatus.local_protocol_mode === 'auto') &&
 			flag(this.currentStatus.local_enable) && flag(this.currentStatus.local_signal_enable) &&
 			!this.currentStatus.root_password_configured;
 		if ((publicEnabled && !flag(this.currentStatus.local_signal_public_enable) ||

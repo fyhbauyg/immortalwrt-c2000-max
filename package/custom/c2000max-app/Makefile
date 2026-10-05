@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=c2000max-app
 PKG_VERSION:=1.11.0
-PKG_RELEASE:=5
+PKG_RELEASE:=7
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_BUILD_PARALLEL:=1
 
@@ -12,7 +12,7 @@ define Package/c2000max-app
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=C2000-MAX official APP compatibility service
-  DEPENDS:=+luci-base +luci-compat +luci-lua-runtime +libopenssl \
+  DEPENDS:=+luci-base +luci-compat +luci-lua-runtime +liblua +libopenssl \
 	+mosquitto-nossl +mosquitto-client-nossl +qmodem +jq +jsonfilter \
 	+coreutils-timeout +ca-bundle +flock +blkid +ip-full +iw \
 	+uclient-fetch
@@ -49,6 +49,9 @@ define Build/Compile
 		-o $(PKG_BUILD_DIR)/c2000max-app-crypto \
 		$(PKG_BUILD_DIR)/crypto.c \
 		$(TARGET_LDFLAGS) -lcrypto
+	$(TARGET_CC) $(TARGET_CPPFLAGS) $(TARGET_CFLAGS) -fPIC -shared \
+		-o $(PKG_BUILD_DIR)/c2000max-app-process.so \
+		$(PKG_BUILD_DIR)/process.c $(TARGET_LDFLAGS) -llua
 endef
 
 define Package/c2000max-app/install
@@ -73,6 +76,8 @@ define Package/c2000max-app/install
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/netstats.lua $(1)/usr/lib/lua/c2000max_app/netstats.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/runtime.lua $(1)/usr/lib/lua/c2000max_app/runtime.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/http.lua $(1)/usr/lib/lua/c2000max_app/http.lua
+	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/server.lua $(1)/usr/lib/lua/c2000max_app/server.lua
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/c2000max-app-process.so $(1)/usr/lib/lua/c2000max_app/process.so
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/public_signal.lua $(1)/usr/lib/lua/c2000max_app/public_signal.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/lan_boundary.lua $(1)/usr/lib/lua/c2000max_app/lan_boundary.lua
 	$(INSTALL_DATA) ./files/usr/lib/lua/c2000max_app/protocol.lua $(1)/usr/lib/lua/c2000max_app/protocol.lua

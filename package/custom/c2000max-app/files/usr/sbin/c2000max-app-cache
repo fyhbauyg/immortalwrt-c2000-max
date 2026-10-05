@@ -73,7 +73,16 @@ while core.local_enabled() or core.remote_enabled() do
 			"APP snapshot cache is idle", last_result, last_elapsed, false)
 	end
 	first = false
-	nixio.nanosleep(active and policy.warm or policy.idle)
+	if active then
+		nixio.nanosleep(policy.warm)
+	else
+		-- The first protocol probe should wake refresh within one second,
+		-- instead of waiting out a 30-second idle sleep.
+		for elapsed = 1, policy.idle do
+			nixio.nanosleep(1)
+			if core.cache_active() then break end
+		end
+	end
 end
 
 write_state("stopped", "APP management disabled", nil, 0)

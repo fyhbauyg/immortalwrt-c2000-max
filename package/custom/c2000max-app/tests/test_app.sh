@@ -132,6 +132,8 @@ if [[ -x "$LUA" ]]; then
 	"$LUA" "$ROOT/tests/test_remote_command_fixture.lua" "$ROOT"
 	"$LUA" "$ROOT/tests/test_cloud_controls_fixture.lua" "$ROOT"
 	"$LUA" "$ROOT/tests/test_protocol_session_fixture.lua" "$ROOT"
+	"$LUA" "$ROOT/tests/test_local_snapshot_fixture.lua" "$ROOT"
+	"$LUA" "$ROOT/tests/test_http_listener_fixture.lua" "$ROOT"
 	"$LUA" "$ROOT/tests/test_public_signal_fixture.lua" "$ROOT"
 	"$LUA" "$ROOT/tests/test_lan_boundary_fixture.lua" "$ROOT/files/usr/lib/lua/c2000max_app/lan_boundary.lua"
 fi
@@ -159,7 +161,7 @@ do
 	assert_contains "$CONFIG" "option ${option}_enable '0'"
 done
 assert_not_contains "$CONFIG" "option local_password_required"
-assert_contains "$CONFIG" "option local_protocol_mode 'modern'"
+assert_contains "$CONFIG" "option local_protocol_mode 'auto'"
 for option in local_device local_signal local_client local_wifi \
 	local_traffic local_sms local_network_write local_sim_switch \
 	local_cellular_record password reboot remote_web device_report signal_report \
@@ -571,7 +573,7 @@ assert_contains "$REMOTE" 'core.note_activity()'
 MAKEFILE="$ROOT/Makefile"
 assert_contains "$MAKEFILE" '+mosquitto-nossl'
 assert_contains "$MAKEFILE" 'PKG_VERSION:=1.11.0'
-assert_contains "$MAKEFILE" 'PKG_RELEASE:=5'
+assert_contains "$MAKEFILE" 'PKG_RELEASE:=7'
 assert_contains "$MAKEFILE" 'c2000max_app/public_signal.lua'
 assert_contains "$MAKEFILE" 'c2000max_app/lan_boundary.lua'
 assert_contains "$MAKEFILE" 'c2000max_app/led.lua'
@@ -593,7 +595,7 @@ assert_not_contains "$MAKEFILE" 'app_v30.js $(1)'
 LUCI_MAKEFILE="$LUCI_ROOT/Makefile"
 assert_contains "$LUCI_MAKEFILE" 'LUCI_TITLE:=LuCI configuration for C2000-MAX APP support'
 assert_contains "$LUCI_MAKEFILE" 'LUCI_DEPENDS:=+c2000max-app'
-assert_contains "$LUCI_MAKEFILE" 'PKG_RELEASE:=11'
+assert_contains "$LUCI_MAKEFILE" 'PKG_RELEASE:=12'
 assert_contains "$LUCI_MAKEFILE" '# call BuildPackage - OpenWrt buildroot signature'
 assert_contains "$ACL" '"c2000max_app": [ "set", "restart" ]'
 

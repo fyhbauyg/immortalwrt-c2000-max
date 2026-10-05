@@ -4,7 +4,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = process.argv[2] || path.join(__dirname, '..');
 const luci = path.join(root, '..', 'luci-app-c2000max-app');
-const source = fs.readFileSync(path.join(luci, 'htdocs/luci-static/resources/view/c2000max/app.js'), 'utf8');
+const source = fs.readFileSync(process.argv[3] || path.join(luci, 'htdocs/luci-static/resources/view/c2000max/app.js'), 'utf8');
 const ids = new Map();
 const calls = [];
 const notifications = [];
@@ -29,10 +29,16 @@ const L = { resolveDefault: (value, fallback) => Promise.resolve(value).catch(()
 const window = { confirm: () => true, setTimeout: () => {}, location: { reload: () => assert.fail('must not reload during refresh') } };
 const document = { getElementById: id => ids.get(id) };
 const view = new Function('rpc', 'ui', 'view', 'L', 'E', 'document', 'window', source)(rpc, ui, { extend: x => x }, L, E, document, window);
-const initial = { local_enable: true, remote_enable: false, cache_running: true, cache_state: 'idle',
+const initial = { local_protocol_mode: 'auto', root_password_configured: false,
+ modem_cache_interval: 10, selector_cache_interval: 15, cache_warm_interval: 2,
+ cache_idle_interval: 30, cache_active_window: 180, signal_test_interval: 1,
+ local_enable: true, remote_enable: false, cache_running: true, cache_state: 'idle',
  cache_last_success: 100, cache_elapsed_ms: 50, status_updated: 101, app_plugin_version: '1.11.0',
  presence_interval: 4, status_interval: 40, report_interval: 600, signal_normal_interval: 3,
  signal_carrier_interval: 10, local_led_enable: true, remote_led_enable: false };
+for (const match of source.split('const INTERVALS')[0].matchAll(/name:\s*'([^']+)'/g)) {
+ if (!(match[1] in initial)) initial[match[1]] = false;
+}
 function allText(node) {
  return typeof node === 'string' ? node : node && node.children ? node.children.map(allText).join(' ') : '';
 }

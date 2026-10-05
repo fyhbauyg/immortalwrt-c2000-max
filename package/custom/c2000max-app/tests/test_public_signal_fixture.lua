@@ -34,6 +34,7 @@ end
 local core = {
   local_enabled=function() return state.local_enabled end,
   local_protocol_mode=function() return state.mode end,
+  note_activity=function() return true end,
   feature_enabled=function(name)
     if name=="local_signal_enable" then return state.signal_enabled end
     if name=="local_signal_public_enable" then return state.public_enabled end

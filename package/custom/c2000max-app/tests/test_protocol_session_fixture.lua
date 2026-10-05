@@ -25,6 +25,12 @@ local json = {
 package.loaded["luci.jsonc"] = json
 
 local files, des_plain = {}, nil
+local real_rename = os.rename
+os.rename = function(source, target)
+	assert(source:find(".tmp.", 1, true), "sessions must use an atomic temporary file")
+	assert(files[target] == nil or files[target]:match("^%d+ [a-z]+\n$"), "old session remains complete during write")
+	files[target] = files[source]; files[source] = nil; return true
+end
 local session_dir = "/tmp/c2000max-app-sessions/"
 local valid_token = string.rep("a", 32)
 local password_token = string.rep("b", 32)
@@ -78,6 +84,7 @@ local mode, enabled, permitted, require_password = "legacy", true, true, false
 local business_calls = 0
 package.loaded["c2000max_app.core"] = {
 	local_protocol_mode = function() return mode end,
+	note_activity = function() return true end,
 	local_enabled = function() return enabled end,
 	device_id = function() return "001122334455" end,
 	management_password_configured = function() return require_password end,
@@ -169,4 +176,5 @@ luci_values = {}
 eq(protocol.valid_session({}, {}, false), false, "LuCI anonymous business remains rejected")
 eq(implicit_calls > 0, true, "LuCI fallback accessors were actually exercised")
 
+os.rename = real_rename
 print("PASS: native HTTP real protocol/session and LuCI fallback " .. count .. " assertions")

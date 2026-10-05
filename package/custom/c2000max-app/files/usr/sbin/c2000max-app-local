@@ -30,19 +30,9 @@ if not listening then
 	os.exit(1)
 end
 
-while true do
-	local client = server:accept()
-	if client then
-		-- The original kpcped listener accepts at most 1023 bytes on TCP
-		-- port 8888 and acknowledges every received discovery message with
-		-- exactly "OK\r\n".  A timeout prevents a half-open probe from
-		-- blocking subsequent APP discovery attempts.
-		client:setopt("socket", "rcvtimeo", 3, 0)
-		client:setopt("socket", "sndtimeo", 3, 0)
-		local request = client:recv(MAX_REQUEST)
-		if request and #request > 0 then
-			client:send(ACK)
-		end
-		client:close()
+require("c2000max_app.server").run(server, function(client)
+	local request = client:recv(MAX_REQUEST)
+	if request and #request > 0 then
+		client:send(ACK)
 	end
-end
+end, { workers = 8, io_timeout = 3, timeout = 5 })

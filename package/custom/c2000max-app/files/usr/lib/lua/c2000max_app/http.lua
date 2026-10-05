@@ -20,6 +20,7 @@ local function plaintext_password_authenticated(data)
 end
 
 local function plaintext_signal_probe(context, data)
+	core.note_activity()
 	if core.local_protocol_mode() == "legacy" then
 		return { code = "1" },
 			protocol.current_des_response_context(context)
