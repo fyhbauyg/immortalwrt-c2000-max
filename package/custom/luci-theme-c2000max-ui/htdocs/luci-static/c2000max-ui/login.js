@@ -7,6 +7,7 @@ button?.addEventListener('click',()=>{
 });
 const image=document.querySelector('.login-wallpaper');
 const credit=document.querySelector('.wallpaper-credit a');
+const creditText=credit?.querySelector('.wallpaper-credit-text')||credit;
 const fallbackDate=image?.dataset.date,fallbackCredit=credit?.textContent,fallbackTitle=credit?.title;
 let pending=false;
 async function refreshWallpaper() {
@@ -26,14 +27,14 @@ async function refreshWallpaper() {
   });
   if(!loaded)return;
   image.src=src;image.dataset.date=info.date;
-  if(credit){credit.textContent='Bing 每日壁纸 · '+(info.copyright||info.date);credit.title=info.copyright||'';}
+  if(credit){creditText.textContent='Bing 每日壁纸 · '+(info.copyright||info.date);credit.title=info.copyright||'';}
  } catch(e) { /* Keep the bundled or previously loaded image on failure. */ }
  finally {pending=false;}
 }
 image?.addEventListener('error',()=>{
  if(image.getAttribute('src')!==image.dataset.fallback){
   image.src=image.dataset.fallback;image.dataset.date=fallbackDate||'';
-  if(credit){credit.textContent=fallbackCredit;credit.title=fallbackTitle;}
+  if(credit){creditText.textContent=fallbackCredit;credit.title=fallbackTitle;}
  }
 });
 refreshWallpaper();

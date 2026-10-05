@@ -10,7 +10,7 @@ Visual assets:
 - c2000max-front.png: existing C2000MAX prototype asset derived from user-supplied references.
 - reference-art.png: user-supplied page artwork reused by the prototype.
 - china-mobile.png: China Mobile mark; see its adjacent source note. Trademark rights remain with the owner.
-- Bing wallpaper: fetched at runtime, not distributed in the APK. Its original copyright credit is displayed on the login page.
+- Bundled fallback wallpaper: wallpaper/default.jpg; source and original credit are recorded in wallpaper/default.json.
+- Daily Bing wallpaper: fetched at runtime. The original copyright credit is displayed on the login page.
 
 The code license does not relicense third-party logos or photographs.
-

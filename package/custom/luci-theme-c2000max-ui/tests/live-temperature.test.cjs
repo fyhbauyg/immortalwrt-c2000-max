@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),D=require('../htdocs/luci-static/c2000max-ui/data.js');
+const entry=value=>({key:'temperature',value});
+const stale={sources:[{kind:'base',age:500,entries:[entry('59 °C')]}]};
+const live={entries:[entry('61 °C')],receivedAt:Date.now()};
+assert.equal(D.modem(stale,{},live).temperature,61,'live QModem read replaces expired disk cache');
+assert.equal(D.modem(stale,{}, {...live,receivedAt:Date.now()-121000}).temperature,null,'never retain an expired live reading');
+assert.equal(D.modem(stale,{}, {...live,entries:[entry('N/A')]}).temperature,null);
+assert.equal(D.modem(stale,{}, {...live,entries:[entry('255 °C')]}).temperature,null);
+assert.equal(D.modem(stale,{}, {...live,entries:[entry('0 °C')]}).temperature,0);
+console.log('PASS: fresh, stale, invalid and zero live temperature readings');

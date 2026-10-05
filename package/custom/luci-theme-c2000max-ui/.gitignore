@@ -1,0 +1,10 @@
+/build/
+/node_modules/
+*.apk
+*.ipk
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

@@ -114,8 +114,9 @@ function mount(root, url) {
   set('ram-total-detail',amount(committed)+' / '+amount(m.total));set('ram-used',amount(committed));set('ram-free',amount(available));
   for(const [key,value] of [['active',m.active],['cache',m.cache],['free',free]]) {
    set('ram-'+key+'-label',valid?amount(value):'—');
-   fillProgress($('#ram-'+key+'-bar'),valid?value/m.total*100:0);
+   if(key!=='free')fillProgress($('#ram-'+key+'-bar'),valid?value/m.total*100:0);
   }
+  $('#ram-bar').classList.toggle('unavailable',!valid);
   $('#ram-bar').setAttribute('aria-label',valid?'RAM：使用 '+amount(used)+'，空闲 '+amount(free):'RAM 数据未获取');
   [['flash',flash],['swap',swap]].forEach(([key,s])=>{
    const valid=Number.isFinite(s.total)&&s.total>0&&Number.isFinite(s.used);
@@ -126,15 +127,41 @@ function mount(root, url) {
    bar.setAttribute('aria-valuetext',off?'未启用':valid?pct+'%':'未获取');
   });
  }
+ let lastMetrics,previousCpu=null;
+ function renderMetrics(raw) {
+  if(raw===lastMetrics)return;
+  lastMetrics=raw;
+  const m=window.C2000Data.metrics(raw,previousCpu);previousCpu=m.cpu;
+  const cpu=m.cpuPercent===null?null:Math.round(m.cpuPercent);
+  const count=m.count===null?null:m.count.toLocaleString('zh-CN');
+  set('cpu-usage-value',cpu===null?'—':cpu+'%');
+  set('cpu-usage-detail',cpu===null?(m.cpu?'采样中':'未获取'):'整机平均');
+  set('connections-value',count);
+  $('#connections-ring')?.classList.toggle('is-large',count!==null&&count.length>6);
+  set('connections-detail',m.limit!==null?'上限 '+m.limit.toLocaleString('zh-CN')+' 条':m.count!==null?'上限未获取':'未获取');
+  for(const [id,percent,label] of [['cpu-usage-ring',cpu,cpu===null?(m.cpu?'采样中':'未获取'):cpu+'%'],['connections-ring',m.connectionPercent,m.count===null?'未获取':count+' 条'+(m.limit!==null?'，上限 '+m.limit.toLocaleString('zh-CN')+' 条':'')]]) {
+   const el=$('#'+id);if(!el)continue;
+   el.querySelector('.status-ring-fill').style.strokeDashoffset=100-(percent??0);
+   el.classList.toggle('is-missing',percent===null);
+   el.classList.toggle('is-high',percent!==null&&percent>=85);
+   if(percent!==null)el.setAttribute('aria-valuenow',Math.round(percent));else el.removeAttribute('aria-valuenow');
+   el.setAttribute('aria-valuetext',label);
+  }
+ }
  function update(data={}) {
   const D=window.C2000Data,m=D.modem(data.modem,data.sim,data.modemBase),h=D.hardware({...data.hardware,wifi_temps:data.hardware?.wifi_temps?.length?data.hardware.wifi_temps:data.sensors?.wifi_temps},data.config),n=D.network(data.network,data.sensors?.wireless??data.wireless,data.clients);
   renderResources(D.resources(data.system));
+  renderMetrics(data.metrics);
   set('uptime-value',D.uptime(data.system?.uptime));
+  const systemNote=data.system?.cacheStatus==='cached'?'数据更新稍慢，显示最近有效读数。':data.system?.cacheStatus==='missing'?'系统数据暂未取得，正在重试。':'';
+  set('resource-note',systemNote);$('#resource-note').hidden=!systemNote;
+  $('#uptime-value').title=systemNote;
   set('connection-heading',n.connected===null?'正在获取状态':n.connected?'连接正常':'上行未连接');
   set('connection-description',n.connected===null?'暂未取得设备状态':n.connected?'上行接口已连接':'请检查上行接口与拨号状态');
   set('wifi-name',n.ssid??'未获取无线信息');
   set('client-count',n.clients===null?'查看设备状态':n.clients+' 台');
   set('network-generation',m.nr?(m.advanced?'5G-A':'5G'):m.mode&&/LTE/.test(m.mode)?'4G':'—');
+  $('#network-generation').classList.toggle('network-advanced',m.nr&&m.advanced);
   set('network-mode',m.mode?.replace('NR5G-SA Mode','5G SA · 独立组网').replace('EN-DC Mode','5G NSA · 双连接')??'未获取网络模式');
   const logo=$('.operator-logo'); const logoFile={mobile:'china-mobile.png',unicom:'china-unicom.png',telecom:'china-telecom.png'}[m.operatorId];
   logo.dataset.operator=m.operatorId||'';logo.hidden=!logoFile; if(logoFile){logo.src=(window.L?.env?.media||'/luci-static/c2000max-ui')+'/assets/'+logoFile;logo.alt=m.operator;}
@@ -150,7 +177,9 @@ function mount(root, url) {
   set('modem-temperature',m.temperature===null?'—':m.temperature+' °C');set('modem-sim',m.sim??'未获取');
   set('modem-status',m.status==='registered'?'已驻网':m.status==='unregistered'?'未驻网':'未获取');
   $('#modem-status').className='ui-badge '+(m.status==='registered'?'success':'neutral');
-  $('.modem-note').hidden=true;$('.modem-note').textContent=m.stale?'信号缓存已过期，请在 QModem 中刷新。':m.cached?'QModem 缓存 · '+(m.section||'模组')+(m.age!==null?' · '+Math.round(m.age)+' 秒前':''):'暂无模组缓存，可打开 QModem 获取。';
+  const missing=[m.model,m.firmware,m.temperature,m.sim,m.mode,m.rsrp,m.band].some(v=>v===null);
+  const modemNote=m.stale?'模组数据暂时未更新，正在重试。':m.age!==null&&m.age>45?'数据更新稍慢，显示最近有效读数。':missing&&m.status!=='unregistered'?'部分参数暂未取得，正在刷新。':'';
+  $('.modem-note').hidden=!modemNote;$('.modem-note').textContent=modemNote;
   for(const key of ['cpu','wifi'])set(key+'-temperature',h.temperatures[key]===null?'—':Number(h.temperatures[key].toFixed(1)));
   const states={normal:['温度正常','success','均低于已配置的温控阈值'],warning:['温度偏高','warning','已达到配置的提醒温度'],critical:['温度过高','danger','已达到配置的告警温度'],missing:[h.allMissing?'未获取':'读数不全','neutral','传感器未完整上报'],unconfigured:['阈值无效','neutral','请检查提醒阈值是否低于告警阈值']};
   const status=states[h.status];set('thermal-status',status[0]);$('#thermal-status').className='ui-badge '+status[1];$('#thermal-status').title='界面提醒阈值（非芯片保护阈值）：'+Object.entries(h.limits).map(([key,v])=>(key==='cpu'?'CPU':'Wi-Fi')+' '+v.warning+' / '+v.critical+' °C').join('；');set('thermal-note',status[2]);$('#thermal-note').hidden=true;

@@ -168,7 +168,8 @@ body.c2000-ui { padding-top:0; background:var(--page); color:var(--text); font:v
 .c2000-ui #indicators > [data-indicator=poll-status]::before { content:'⟳'; font-size:24px; line-height:1; }
 .c2000-ui #indicators > [data-indicator=poll-status][data-style=active] { color:var(--icon-signal); }
 .c2000-ui .topbar { gap:12px; }
-.c2000-ui .modem-note,.c2000-ui #thermal-note { display:none; }
+.c2000-ui .modem-note[hidden],.c2000-ui #thermal-note { display:none; }
+.c2000-ui .modem-note:not([hidden]) { display:block; }
 .c2000-ui .signal-health[data-quality=good] > .icon:first-child { color:var(--success); }
 .c2000-ui .signal-health[data-quality=fair] > .icon:first-child { color:var(--warning); }
 .c2000-ui .signal-health[data-quality=weak] > .icon:first-child { color:var(--danger); }
@@ -209,5 +210,12 @@ body.c2000-ui { padding-top:0; background:var(--page); color:var(--text); font:v
 }
 .c2000-ui .quick-access .thermal-card { width:100%; box-sizing:border-box; align-self:stretch; }
 .c2000-ui .td.cbi-section-actions > div > button { flex:0 0 auto; }
-@media(max-width:1279px) { .c2000-ui .quick-access .thermal-card { align-self:start; } }
+@media(min-width:701px) and (max-width:1279px) {
+ .c2000-ui .quick-access .thermal-card { align-self:stretch; display:flex; flex-direction:column; }
+ .c2000-ui .thermal-card .temperature-grid { flex:1; grid-template-columns:minmax(0,1fr); grid-template-rows:1fr 1fr; gap:0; }
+ .c2000-ui .thermal-card .stat-tile { display:grid; grid-template-columns:minmax(0,1fr) max-content max-content; align-items:center; column-gap:6px; padding:16px 4px; border-radius:0; background:none; }
+ .c2000-ui .thermal-card .stat-tile + .stat-tile { border-top:1px solid var(--border); }
+ .c2000-ui .thermal-card .stat-value { margin-top:0; font-size:28px; }
+ .c2000-ui .thermal-card .stat-unit { margin-left:0; }
+}
 .c2000-ui .cbi-dropdown[open] > ul.dropdown { transition:none; }

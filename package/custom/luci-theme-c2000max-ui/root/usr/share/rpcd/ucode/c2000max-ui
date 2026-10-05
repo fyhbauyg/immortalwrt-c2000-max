@@ -4,6 +4,25 @@ import { readfile, stat, popen } from 'fs';
 import { connect } from 'ubus';
 return {
  'c2000max.ui': {
+  metrics: {
+   call: function() {
+    let cpu=null, count=null, limit=null;
+    let line=match(readfile('/proc/stat') || '', /^cpu\s+([0-9 ]+)/);
+    if(line) {
+     let fields=split(trim(line[1]), /\s+/), total=0;
+     if(length(fields)>=4) {
+      // guest counters already belong to user/nice; do not count them twice.
+      for(let i=0; i<min(8,length(fields)); i++) total+=+fields[i];
+      cpu={ total, idle:+fields[3]+(length(fields)>4?+fields[4]:0) };
+     }
+    }
+    let raw=trim(readfile('/proc/sys/net/netfilter/nf_conntrack_count') || '');
+    if(match(raw,/^[0-9]+$/)) count=+raw;
+    raw=trim(readfile('/proc/sys/net/netfilter/nf_conntrack_max') || '');
+    if(match(raw,/^[0-9]+$/) && +raw>0) limit=+raw;
+    return { cpu, connections:{ count, limit } };
+   }
+  },
   clients: {
    call: function() {
     let bus=connect(), macs={}, available=false;
@@ -73,14 +92,19 @@ return {
     if (type(section) != 'string' || !match(section, /^[A-Za-z0-9_]{1,64}$/))
      return { sources: [], error: 'invalid_section' };
     let sources = [];
-    for (let kind in ['base', 'cell', 'sim', 'network']) {
-     let path = '/tmp/cache_' + kind + '_info_' + section;
+    for (let kind in ['base', 'cell', 'info', 'sim', 'network']) {
+     let path = kind=='info'?'/tmp/cache_info_'+section:'/tmp/cache_' + kind + '_info_' + section;
      let st = stat(path);
      if (!st || st.size > 262144) continue;
      try {
       let data = json(readfile(path));
-      if (type(data.modem_info) == 'array')
-       push(sources, { kind, age: max(0, time() - st.mtime), entries: data.modem_info });
+      if (type(data.modem_info) == 'array') {
+       let entries=[];
+       // Return only dashboard fields, excluding subscriber/device identities.
+       for(let entry in data.modem_info)
+        if(type(entry.key)=='string' && match(entry.key,/^(name|revision|temperature|network_mode|RSRP|SINR|RSRQ|Band( \(CA\)| [0-9]+)?|LTE_BAND|Freq band indicator|MCC|MMC|MNC|ISP|Cell ?ID)$/i)) push(entries,entry);
+       push(sources, { kind, age: max(0, time() - st.mtime), sample:st.mtime, entries });
+      }
      } catch (e) {}
     }
     return { section, sources, cache_only: true };

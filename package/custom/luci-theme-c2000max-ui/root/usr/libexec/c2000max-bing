@@ -35,4 +35,3 @@ for host in cn.bing.com www.bing.com; do
  exit 0
 done
 exit 1
-

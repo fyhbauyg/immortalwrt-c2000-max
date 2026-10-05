@@ -5,4 +5,3 @@
     <button data-panel="devices"><svg class="icon icon-tone-device"><use href="#people"/></svg><span>设备</span></button>
     <button data-menu-toggle aria-controls="sidebar" aria-expanded="false"><svg class="icon"><use href="#menu"/></svg><span>菜单</span></button>
   </nav>
-

@@ -7,4 +7,3 @@ config theme 'main'
 	# option cpu_critical '90'
 	# option wifi_warning '80'
 	# option wifi_critical '90'
-

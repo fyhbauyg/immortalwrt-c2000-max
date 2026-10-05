@@ -142,6 +142,8 @@
  .c2000-ui .theme-picker > .theme-control { height:auto; }
  .c2000-ui .metric.radio-card { padding:14px 16px; }
  .c2000-ui .device-scene { max-width:260px; }
+ .c2000-ui .resource-card { padding:20px 16px; }
+ .c2000-ui .resource-header h2 { font-size:var(--text-md); }
 }
 
 /* Header actions and status dialogs use theme tokens in both color modes. */

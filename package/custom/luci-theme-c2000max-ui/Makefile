@@ -5,7 +5,9 @@ LUCI_DEPENDS:=+luci-base +luci-theme-bootstrap +rpcd-mod-luci +uclient-fetch +ca
 LUCI_MINIFY_CSS:=0
 LUCI_MINIFY_JS:=0
 PKG_LICENSE:=Apache-2.0
-PKG_VERSION:=1.0.16
+PKG_URL:=https://github.com/jasonBrom/C2000MAX-UI
+PKG_MAINTAINER:=jasonBrom
+PKG_VERSION:=1.0.22
 PKG_RELEASE:=1
 
 # Normalize a checkout copied from Windows before LuCI packages its files.

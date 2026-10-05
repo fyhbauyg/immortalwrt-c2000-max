@@ -1,4 +1,23 @@
 /* Dashboard composition. Reusable primitives are in components.css. */
+
+/* Compact gauges sit with the radio cards, below frequency and aggregation. */
+.metric.system-status-card { min-height:0; }
+.system-status-item { display:flex; flex-direction:column; align-items:center; gap:5px; text-align:left; }
+.system-status-item:first-child { padding-right:16px; }
+.status-ring { --ring-color:var(--icon-network); position:relative; display:grid; place-items:center; width:58px; height:58px; flex-shrink:0; }
+.connections-ring { --ring-color:var(--icon-signal); }
+.status-ring svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; transform:rotate(-90deg); }
+.status-ring circle { fill:none; stroke-width:7; }
+.status-ring-track { stroke:var(--border-soft); }
+.status-ring-fill { stroke:var(--ring-color); stroke-linecap:round; transition:stroke-dashoffset .6s ease,stroke .3s ease; }
+.status-ring.is-missing .status-ring-fill { stroke:transparent; }
+.status-ring.is-high { --ring-color:var(--warning); }
+.status-ring-value { font-size:16px; font-weight:600; line-height:1; letter-spacing:-.5px; font-variant-numeric:tabular-nums; }
+.status-ring.is-large .status-ring-value { font-size:11px; }
+.system-status-item > .stat-label { min-width:0; width:100%; }
+.ui-badge.network-advanced { color:var(--icon-device); background:var(--icon-device-soft); }
+@media(prefers-reduced-motion:reduce) { .status-ring-fill { transition:none; } }
+
 .dashboard { display: grid; grid-template-columns: minmax(0,1fr) 320px; align-items: stretch; gap: 24px; max-width: 1440px; margin: auto; }
 .overview { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
 .hero { display: grid; grid-template-columns: minmax(0,1fr) 256px; column-gap: 20px; align-items: center; padding: 12px 4px 10px; }
@@ -28,7 +47,9 @@
 .signal-health > .icon:first-child { color: var(--success); }
 .chevron { color: var(--text-muted); width: 16px; height: 16px; margin-left: auto; }
 .resource-card { flex: 1; display: flex; flex-direction: column; }
-.resource-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.resource-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 12px; margin:0; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.resource-note { color:var(--text-muted); font-size:var(--text-xs); margin:12px 0 0; }
+.resource-note[hidden] { display:none; }
 .resource-header h2 { font-size: var(--text-lg); font-weight: 600; line-height: 1.4; margin: 0 0 4px; }
 .resource-header p { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
 .resource-total { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
@@ -93,6 +114,12 @@ button.quick-card:hover { background: var(--surface-soft); border-color: var(--b
 body.disconnected .status-dot { background: var(--text-muted); }
 body.disconnected .rings { opacity: .3; }
 body.disconnected .operator-logo { opacity: .5; }
+@media (min-width: 1280px) {
+  .hero { grid-template-rows:auto 1fr; padding-top:0; }
+  .greeting { grid-column:1; grid-row:1; padding-top:12px; }
+  .device-scene { grid-column:1; grid-row:2; }
+  .metrics { grid-column:2; grid-row:1 / 3; align-self:start; margin-top:0; }
+}
 @media (min-width: 1700px) { .dashboard { grid-template-columns: minmax(0,1fr) 360px; gap: 28px; } .hero { grid-template-columns: minmax(0,1fr) 270px; } }
 @media (max-width: 1279px) {
   .dashboard { grid-template-columns: minmax(0,1fr); }
@@ -114,8 +141,13 @@ body.disconnected .operator-logo { opacity: .5; }
   .health-card { padding: 20px; }
   .uptime { gap: 10px; }
   .signal-health { gap: 10px; padding-left: 20px; }
-  .resource-header { grid-template-columns: minmax(0,1fr) auto; gap: 12px; }
-  .resource-header .ui-icon-box { display: none; }
+  .resource-header { grid-template-columns:32px minmax(0,1fr) auto; grid-template-areas:"icon title total" "capacity capacity capacity"; gap:10px 8px; }
+  .resource-header .ui-icon-box { display:grid; grid-area:icon; width:32px; height:32px; }
+  .resource-header .ui-icon-box .icon { width:20px; height:20px; }
+  .resource-heading { display:contents; }
+  .resource-header h2 { grid-area:title; margin:0; }
+  .resource-header p { grid-area:capacity; }
+  .resource-total { grid-area:total; }
   .resource-total > span { display: none; }
   .resource-header p { font-size: var(--text-xs); }
   .resource-header h2 { font-size: var(--text-lg); }

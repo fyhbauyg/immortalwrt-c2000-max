@@ -47,6 +47,8 @@
 .account-menu button .icon { width: 18px; height: 18px; }
 .main-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; max-width: 1440px; margin: 24px auto 0; color: var(--text-muted); font-size: var(--text-xs); }
 .main-footer a { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); font-size: var(--text-sm); }
+.main-footer a.theme-credit { min-height:0; color:inherit; font-size:inherit; }
+.main-footer a.theme-credit:hover { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
 dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100svh - 48px); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; color: var(--text); background: var(--surface); box-shadow: var(--shadow-raised); }
 dialog::backdrop { background: var(--overlay); backdrop-filter: blur(6px); }
 .dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }

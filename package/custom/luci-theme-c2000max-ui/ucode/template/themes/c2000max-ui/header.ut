@@ -16,18 +16,18 @@
 <meta name="theme-color" content="#eef3f8">
 <meta name="darkreader-lock">
 <title>{{ entityencode(boardinfo.hostname ?? 'C2000MAX') }} · {{ entityencode(node?.title ? _(node.title) : 'C2000MAX') }}</title>
-<script src="{{ media }}/theme.js?v=1.0.16-r1"></script>
+<script src="{{ media }}/theme.js?v=1.0.22-r1"></script>
 <link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
 {% for (let file in ['tokens','components','styles','c2000max','luci-adapter']): %}
-<link rel="stylesheet" href="{{ media }}/{{ file }}.css?v=1.0.16-r1">
+<link rel="stylesheet" href="{{ media }}/{{ file }}.css?v=1.0.22-r1">
 {% endfor %}
 {% if (node?.css): %}<link rel="stylesheet" href="{{ resource }}/{{ node.css }}">{% endif %}
 {% if (css): %}<style>{{ css }}</style>{% endif %}
-<link rel="stylesheet" href="{{ media }}/density.css?v=1.0.16-r1">
+<link rel="stylesheet" href="{{ media }}/density.css?v=1.0.22-r1">
 <script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
 <script src="{{ resource }}/cbi.js"></script>
-<script src="{{ media }}/data.js?v=1.0.16-r1"></script>
-<script src="{{ media }}/dashboard.js?v=1.0.16-r1"></script>
+<script src="{{ media }}/data.js?v=1.0.22-r1"></script>
+<script src="{{ media }}/dashboard.js?v=1.0.22-r1"></script>
 </head>
 <body class="c2000-ui lang_{{ dispatcher.lang }}" data-page="{{ entityencode(join('-', ctx.request_path), true) }}">
 {% if (!blank_page): %}
@@ -44,4 +44,3 @@
 <noscript><div class="alert-message warning">{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</div></noscript>
 <div id="tabmenu" hidden></div>
 {% endif %}
-

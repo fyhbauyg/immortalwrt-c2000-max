@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict');
+const D=require('../htdocs/luci-static/c2000max-ui/data.js');
+const MiB=1048576,start=100000;
+const system={uptime:120,memory:{total:512*MiB,free:200*MiB,cached:80*MiB,buffered:20*MiB,available:260*MiB},root:{total:1024,used:256},swap:{total:256*MiB,free:240*MiB}};
+const first=D.systemSnapshot({},system,start);
+assert.equal(first.cacheStatus,'fresh');
+for(const invalid of [null,undefined,7,{},[],{uptime:-1},{memory:{total:512*MiB,free:-1,cached:0,buffered:0}}]){
+ const kept=D.systemSnapshot(first,invalid,start+10000);
+ assert.equal(kept.uptime,120);
+ assert.deepEqual(D.resources(kept),D.resources(system));
+ assert.equal(kept.samples.memory,start,'failed reads cannot renew the sample');
+}
+const partial=D.systemSnapshot(first,{uptime:140,root:{total:1024,used:512}},start+20000);
+assert.equal(partial.uptime,140);
+assert.equal(D.resources(partial).flash.used,.5);
+assert.deepEqual(partial.memory,system.memory);
+assert.equal(partial.cacheStatus,'cached');
+const expired=D.systemSnapshot(partial,null,start+60001);
+assert.equal(expired.memory,undefined);
+assert.equal(expired.swap,undefined);
+assert.equal(expired.uptime,140,'groups expire independently');
+assert.equal(expired.root.used,512);
+assert.equal(D.systemSnapshot(expired,null,start+80001).cacheStatus,'missing');
+assert.equal(D.systemSnapshot(first,undefined,start+30001).cacheStatus,'cached','delayed reads are marked');
+const recovered=D.systemSnapshot(expired,{...system,uptime:200},start+90000);
+assert.equal(recovered.cacheStatus,'fresh');
+assert.equal(recovered.samples.memory,start+90000);
+const reboot=D.systemSnapshot(first,{uptime:0},start+1000);
+assert.equal(reboot.uptime,0);
+assert.equal(reboot.memory,undefined,'reboot must not reuse resources from the previous boot');
+assert.equal(D.systemSnapshot({}, {...system,swap:{total:0,free:0}},start).swap.total,0);
+console.log('PASS: system timeout, invalid/partial replies, per-group expiry, recovery, reboot and disabled swap');

@@ -66,7 +66,7 @@ h1, h2, h3, p { margin-top: 0; }
 .radio-card-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); margin: 0; }
 .radio-card-values > div { min-width: 0; }
 .radio-card-values > div + div { border-left: 1px solid var(--border); padding-left: 16px; }
-.radio-card-values .stat-label { color: var(--text-muted); font-size: var(--text-sm); font-weight: 400; }
+.radio-card-values .stat-label { color: var(--text-muted); font: 400 var(--text-sm)/1.5 var(--font-sans); }
 .radio-value { display: flex; align-items: baseline; gap: 4px; margin-top: 5px; white-space: nowrap; }
 .radio-value strong { color: var(--text); font-size: var(--text-xl); line-height: var(--leading-tight); font-weight: 600; font-variant-numeric: tabular-nums; }
 .radio-value small { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400; }
@@ -79,7 +79,8 @@ h1, h2, h3, p { margin-top: 0; }
 .resource-card .ui-progress > i { width: 0; transition: width .65s cubic-bezier(.22,.61,.36,1); }
 .ui-progress > .ram-active, .legend-active { background: var(--ram-active); }
 .ui-progress > .ram-cached, .legend-cache { background: var(--ram-cache); }
-.ui-progress > .ram-unused, .legend-free { background: var(--ram-free); }
+.ram-bar { background: var(--ram-free); }
+.legend-free { background: var(--ram-free); }
 .ui-progress > .flash-fill { background: var(--flash); }
 .ui-progress > .swap-fill { background: var(--swap); }
 .ui-progress.unavailable { background: var(--track); }

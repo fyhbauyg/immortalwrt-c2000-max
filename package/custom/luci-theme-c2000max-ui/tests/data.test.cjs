@@ -5,6 +5,7 @@ const vm=require('node:vm');
 const D=require('../htdocs/luci-static/c2000max-ui/data.js');
 const MiB=1048576;
 const fixture={
+ metrics:{cpu:{total:1000,idle:700},connections:{count:666,limit:32768}},
  system:{uptime:194460,memory:{total:512*MiB,free:287*MiB,available:350*MiB,cached:72*MiB,buffered:10*MiB},root:{total:128*1024,used:38.4*1024},swap:{total:256*MiB,free:244*MiB}},
  hardware:{cpu_temp:48000,cpu_sensor:'cpu-thermal',wifi_temps:[{milli_c:42000,phy:'phy0'}]},
  config:{cpu_warning:'80',cpu_critical:'90',wifi_warning:'80',wifi_critical:'90'},
@@ -18,6 +19,16 @@ const fixture={
  ]}
 };
 const res=D.resources(fixture.system);
+assert.equal(D.metrics(fixture.metrics).cpuPercent,null,'first CPU sample must not invent a utilization');
+assert.equal(D.metrics({cpu:{total:2000,idle:1330}},fixture.metrics.cpu).cpuPercent,37);
+assert.equal(D.metrics({cpu:{total:2000,idle:1700}},fixture.metrics.cpu).cpuPercent,0);
+assert.equal(D.metrics({cpu:{total:900,idle:650}},fixture.metrics.cpu).cpuPercent,null,'reset counters must invalidate the sample');
+assert.equal(D.metrics({cpu:{total:2000,idle:600}},fixture.metrics.cpu).cpuPercent,null,'negative idle delta must invalidate the sample');
+assert.equal(D.metrics({connections:{count:0,limit:32768}}).connectionPercent,0);
+assert.equal(D.metrics({connections:{count:40000,limit:32768}}).connectionPercent,100);
+assert.equal(D.metrics({connections:{count:10,limit:0}}).connectionPercent,null);
+assert.equal(D.metrics({connections:{count:null,limit:32768}}).count,null);
+assert.equal(D.metrics({connections:{count:-1,limit:32768}}).count,null);
 assert.deepEqual(res.memory,{total:512,active:143,cache:82,available:350});
 assert.equal(D.resources({memory:{total:512}}).memory.available,null);
 assert.equal(D.resources({memory:{total:512*MiB,available:150*MiB}}).memory.available,150);

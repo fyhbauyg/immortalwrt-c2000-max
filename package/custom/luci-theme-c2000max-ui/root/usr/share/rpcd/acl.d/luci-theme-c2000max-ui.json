@@ -18,12 +18,14 @@
           "sim_status"
         ],
         "c2000max.ui": [
+          "metrics",
           "modem",
           "sensors",
           "clients"
         ],
         "qmodem": [
-          "base_info"
+          "base_info",
+          "cell_info"
         ]
       },
       "uci": [
