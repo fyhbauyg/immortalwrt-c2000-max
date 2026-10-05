@@ -4174,44 +4174,22 @@ mtk_hnat_ipv6_nf_local_out(void *priv, struct sk_buff *skb,
 			}
 		}
 	}
-	/*
-	 * See mtk_hnat_nf_local_out_sanitize(): this hook only ever sees frames
-	 * that this host originates, so the descriptor it was handed is a
-	 * leftover from a recycled buffer.  Invalidate it before the hooks below
-	 * run, so they do not read the stale entry number and reason as an
-	 * "already forwarded by the PPE" verdict and blackhole the frame.
-	 */
-	if (!skb_shared(skb) && !skb_cow_head(skb, 0))
-		skb_hnat_magic_tag(skb) = 0;
-
 	return NF_ACCEPT;
 }
 
 /*
- * A descriptor written by the hardware always carries a valid FOE_MAGIC_*
- * interface tag.  The magic tag itself lives in skb->head and is only ever
- * written by the WED receive path, so a recycled buffer hands locally
- * generated frames a stale tag together with the entry number, reason and
- * CDRT/TOPS bits of whatever packet used the buffer before; the br and
- * post-routing hooks then conclude that the PPE already forwarded the frame
- * and blackhole it with NF_DROP.
- *
- * A missing interface tag is the only reliable sign of such a leftover.  A zero
- * PSE source port is not (that is NR_PDMA_PORT), and neither the entry nor the
- * PPE index can be used here: skb_hnat_is_hashed() already bounds the entry
- * before mtk_hnat_nf_post_routing() can return non-zero, and skb_hnat_ppe()
- * reports 0 for every sport that is not an NR_GMAC*_PORT.
- *
- * Returns true when the caller must return NF_ACCEPT instead of dropping.
+ * Test the incoming descriptor before post-routing processes it.  Bound
+ * keepalive copies clear their descriptor before returning a drop decision;
+ * checking it afterwards would mistake that deliberate clear for stale data.
+ * A missing interface tag identifies a leftover descriptor.  A zero PSE
+ * source port is valid (NR_PDMA_PORT), and the entry/PPE indices do not prove
+ * that the descriptor belongs to this packet.
  */
 static bool hnat_stale_descriptor(struct sk_buff *skb, const char *func,
 				  const struct net_device *out)
 {
-	if (skb_hnat_iface(skb))
+	if (!is_magic_tag_valid(skb) || skb_hnat_iface(skb))
 		return false;
-
-	if (!skb_shared(skb) && !skb_cow_head(skb, 0))
-		skb_hnat_magic_tag(skb) = 0;
 
 	if (debug_level >= 7)
 		printk_ratelimited(KERN_WARNING
@@ -4223,23 +4201,24 @@ static bool hnat_stale_descriptor(struct sk_buff *skb, const char *func,
 }
 
 /*
- * Locally generated frames can never carry a descriptor written by the
- * hardware, so whatever a recycled buffer left in skb->head is stale.  This
- * hook is registered at NF_IP_PRI_FIRST, ahead of the ipv4/ipv6 local-out
- * hooks, and clears the tag before they run: they bail out at their own
- * is_magic_tag_valid() check and never look up - let alone write - the FOE
- * entry that the leftover number points at, and the br/post-routing hooks
- * behind them no longer treat the frame as an already-forwarded duplicate.
+ * LOCAL_OUT also sees forwarded packets after tunnel encapsulation.  Preserve
+ * their valid interface tag for 6rd, MAP-E/DS-Lite and TOPS/CDRT offload, even
+ * when skb_scrub_packet() has reset skb_iif.  Clear only stale descriptors,
+ * before the local-out or post-routing hooks can access a leftover FOE entry.
  */
 static unsigned int
 mtk_hnat_nf_local_out_sanitize(void *priv, struct sk_buff *skb,
 			       const struct nf_hook_state *state)
 {
-	if (!skb || !is_magic_tag_valid(skb))
+	if (!skb || skb_headroom(skb) < FOE_INFO_LEN ||
+	    !hnat_stale_descriptor(skb, __func__, state->out))
 		return NF_ACCEPT;
 
-	if (!skb_shared(skb) && !skb_cow_head(skb, 0))
-		skb_hnat_magic_tag(skb) = 0;
+	/* Do not leave a stale descriptor live or modify another clone's head. */
+	if (skb_shared(skb) || skb_cow_head(skb, 0))
+		return NF_DROP;
+
+	memset(skb_hnat_info(skb), 0, sizeof(struct hnat_desc));
 
 	return NF_ACCEPT;
 }
@@ -4249,6 +4228,9 @@ mtk_hnat_ipv6_nf_post_routing(void *priv, struct sk_buff *skb,
 			      const struct nf_hook_state *state)
 {
 	if (!skb)
+		goto drop;
+
+	if (mtk_hnat_nf_local_out_sanitize(priv, skb, state) == NF_DROP)
 		goto drop;
 
 	post_routing_print(skb, state->in, state->out, __func__);
@@ -4263,8 +4245,6 @@ mtk_hnat_ipv6_nf_post_routing(void *priv, struct sk_buff *skb,
 		if (!mtk_hnat_nf_post_routing(skb, state->out, hnat_ipv6_get_nexthop, __func__))
 			return NF_ACCEPT;
 	}
-	if (hnat_stale_descriptor(skb, __func__, state->out))
-		return NF_ACCEPT;
 
 drop:
 	if (skb && (debug_level >= 7))
@@ -4286,6 +4266,9 @@ mtk_hnat_ipv4_nf_post_routing(void *priv, struct sk_buff *skb,
 	if (!skb)
 		goto drop;
 
+	if (mtk_hnat_nf_local_out_sanitize(priv, skb, state) == NF_DROP)
+		goto drop;
+
 	post_routing_print(skb, state->in, state->out, __func__);
 
 	/* if bridge-nf-call-iptables is enabled and the skb is forwarded in bridge-layer,
@@ -4298,8 +4281,6 @@ mtk_hnat_ipv4_nf_post_routing(void *priv, struct sk_buff *skb,
 		if (!mtk_hnat_nf_post_routing(skb, state->out, hnat_ipv4_get_nexthop, __func__))
 			return NF_ACCEPT;
 	}
-	if (hnat_stale_descriptor(skb, __func__, state->out))
-		return NF_ACCEPT;
 
 drop:
 	if (skb && (debug_level >= 7))
@@ -4376,6 +4357,9 @@ mtk_hnat_br_nf_local_out(void *priv, struct sk_buff *skb,
 	if (!is_magic_tag_valid(skb))
 		return NF_ACCEPT;
 
+	if (mtk_hnat_nf_local_out_sanitize(priv, skb, state) == NF_DROP)
+		goto drop;
+
 	post_routing_print(skb, state->in, state->out, __func__);
 
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
@@ -4385,8 +4369,6 @@ mtk_hnat_br_nf_local_out(void *priv, struct sk_buff *skb,
 #endif
 
 	if (!mtk_hnat_nf_post_routing(skb, state->out, 0, __func__))
-		return NF_ACCEPT;
-	if (hnat_stale_descriptor(skb, __func__, state->out))
 		return NF_ACCEPT;
 
 drop:
@@ -4435,16 +4417,6 @@ mtk_hnat_ipv4_nf_local_out(void *priv, struct sk_buff *skb,
 	} else {
 		hnat_set_head_frags(state, skb, 1, hnat_set_alg);
 	}
-
-	/*
-	 * See mtk_hnat_nf_local_out_sanitize(): this hook only ever sees frames
-	 * that this host originates, so the descriptor it was handed is a
-	 * leftover from a recycled buffer.  Invalidate it before the hooks below
-	 * run, so they do not read the stale entry number and reason as an
-	 * "already forwarded by the PPE" verdict and blackhole the frame.
-	 */
-	if (!skb_shared(skb) && !skb_cow_head(skb, 0))
-		skb_hnat_magic_tag(skb) = 0;
 
 	return NF_ACCEPT;
 }
